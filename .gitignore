@@ -1,0 +1,55 @@
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio
+.vs/
+.vscode/
+*.user
+*.userosscache
+*.sln.docstates
+
+# Test Results
+TestResults/
+*.trx
+
+# Local environment
+.env
+!.env.example
+local.settings.json
+appsettings.Development.json
+
+# Application data
+data/
+*.txt
+
+# Azure Functions
+bin/
+obj/
+.azure/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
+publish/
+
+# Storage
+azurite_data/
