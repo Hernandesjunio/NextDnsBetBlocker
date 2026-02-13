@@ -37,7 +37,7 @@ public class NextDnsClient : INextDnsClient
     {
         try
         {
-            var url = $"{BaseUrl}/profiles/{profileId}/logs?limit={limit}&sort=asc";
+            var url = $"{BaseUrl}/profiles/{profileId}/logs?limit={limit}&sort=asc&status=default";
 
             // Add from filter if provided
             // NextDNS API uses 'from' and 'to' parameters (Unix timestamps)
