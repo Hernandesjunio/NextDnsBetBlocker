@@ -1,5 +1,6 @@
 namespace NextDnsBetBlocker.Core.Interfaces;
 
+using System.Threading.Channels;
 using NextDnsBetBlocker.Core.Models;
 
 public interface INextDnsClient
@@ -139,4 +140,38 @@ public interface IBetBlockerPipeline
     /// Updates the HaGeZi gambling list
     /// </summary>
     Task UpdateHageziAsync();
+}
+
+public interface ILogsProducer
+{
+    /// <summary>
+    /// Start producing logs from NextDNS and send to channel
+    /// Runs continuously, pulling logs and writing to channel
+    /// </summary>
+    Task StartAsync(Channel<LogEntryData> channel, string profileId, CancellationToken cancellationToken);
+}
+
+public interface IClassifierConsumer
+{
+    /// <summary>
+    /// Consume logs, classify them, and forward only suspicious ones
+    /// Filters logs based on allowlist, HaGeZi, and BetClassifier
+    /// </summary>
+    Task StartAsync(
+        Channel<LogEntryData> inputChannel,
+        Channel<SuspectDomainEntry> outputChannel,
+        string profileId,
+        CancellationToken cancellationToken);
+}
+
+public interface IAnalysisConsumer
+{
+    /// <summary>
+    /// Consume suspicious domains and analyze them in detail
+    /// Performs HTTP requests and content analysis
+    /// </summary>
+    Task StartAsync(
+        Channel<SuspectDomainEntry> inputChannel,
+        string profileId,
+        CancellationToken cancellationToken);
 }

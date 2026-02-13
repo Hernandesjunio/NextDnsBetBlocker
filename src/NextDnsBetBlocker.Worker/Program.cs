@@ -114,6 +114,11 @@ public static class Program
                 // Gambling Suspect Analyzer
                 services.AddSingleton<IGamblingSuspectAnalyzer, GamblingSuspectAnalyzer>();
 
+                // Pipeline Consumers and Producer
+                services.AddSingleton<ILogsProducer, LogsProducer>();
+                services.AddSingleton<IClassifierConsumer, ClassifierConsumer>();
+                services.AddSingleton<IAnalysisConsumer, AnalysisConsumer>();
+
                 // Worker
                 services.AddSingleton<WorkerService>();
                 services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<WorkerService>());
