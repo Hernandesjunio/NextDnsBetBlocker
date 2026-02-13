@@ -32,8 +32,13 @@ public static class Program
             {
                 var settings = context.Configuration.Get<WorkerSettings>() ?? new WorkerSettings();
 
-                // HttpClientFactory for NextDNS
+                // HttpClientFactory - manages connection pooling and reuse
                 services.AddHttpClient<INextDnsClient, NextDnsClient>();
+                services.AddHttpClient("HageziProvider")
+                    .ConfigureHttpClient(client =>
+                    {
+                        client.Timeout = TimeSpan.FromSeconds(30);
+                    });
 
                 // Azure Storage
                 if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
@@ -82,6 +87,7 @@ public static class Program
                     new HageziProvider(
                         containerClient,
                         Path.Combine(Directory.GetCurrentDirectory(), "data", "hagezi-gambling-domains.txt"),
+                        sp.GetRequiredService<IHttpClientFactory>(),
                         sp.GetRequiredService<ILogger<HageziProvider>>()));
 
                 // Allowlist

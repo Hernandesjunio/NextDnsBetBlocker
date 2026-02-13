@@ -9,6 +9,7 @@ public class HageziProvider : IHageziProvider
     private readonly BlobContainerClient _containerClient;
     private readonly ILogger<HageziProvider> _logger;
     private readonly string _localCachePath;
+    private readonly IHttpClientFactory _httpClientFactory;
     private HashSet<string> _gamblingDomains = [];
     private DateTime _lastUpdate = DateTime.MinValue;
 
@@ -20,10 +21,15 @@ public class HageziProvider : IHageziProvider
     private const string HageziUrlAdblock = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/gambling.txt";
     private const string HageziUrlWildcard = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling.txt";
 
-    public HageziProvider(BlobContainerClient containerClient, string localCachePath, ILogger<HageziProvider> logger)
+    public HageziProvider(
+        BlobContainerClient containerClient,
+        string localCachePath,
+        IHttpClientFactory httpClientFactory,
+        ILogger<HageziProvider> logger)
     {
         _containerClient = containerClient;
         _localCachePath = localCachePath;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -50,7 +56,7 @@ public class HageziProvider : IHageziProvider
         {
             _logger.LogInformation("Refreshing HaGeZi gambling list from multiple sources");
 
-            using var httpClient = new HttpClient();
+            var httpClient = _httpClientFactory.CreateClient();
 
             // Download both formats for maximum coverage
             _logger.LogInformation("Downloading adblock format from {Url}", HageziUrlAdblock);
@@ -189,22 +195,28 @@ public class HageziProvider : IHageziProvider
 
         foreach (var line in content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var trimmed = line.Trim();
+            var trimmed = line.AsSpan().Trim();
 
             // Skip comments and empty lines
-            if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("[") || trimmed.StartsWith("!"))
+            if (trimmed.IsEmpty || trimmed[0] == '[' || trimmed[0] == '!')
                 continue;
 
             // Extract domain from adblock format (e.g., "||example.com^" becomes "example.com")
-            var domain = trimmed
-                .Replace("||", string.Empty)
-                .Replace("^", string.Empty)
-                .Trim();
+            var domain = trimmed;
 
-            if (!string.IsNullOrEmpty(domain) && domain.Contains("."))
+            // Remove || prefix
+            if (domain.StartsWith("||"))
+                domain = domain[2..];
+
+            // Remove ^ suffix
+            if (domain.EndsWith("^"))
+                domain = domain[..^1];
+
+            domain = domain.Trim();
+
+            if (!domain.IsEmpty && domain.Contains('.'))
             {
-                domain = domain.ToLowerInvariant().TrimEnd('.');
-                domains.Add(domain);
+                domains.Add(domain.ToString().ToLowerInvariant());
             }
         }
 
@@ -217,23 +229,32 @@ public class HageziProvider : IHageziProvider
 
         foreach (var line in content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var trimmed = line.Trim();
+            var trimmed = line.AsSpan().Trim();
 
             // Skip comments and empty lines
-            if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("[") || trimmed.StartsWith("!"))
+            if (trimmed.IsEmpty || trimmed[0] == '[' || trimmed[0] == '!')
                 continue;
 
             // Extract domain from wildcard format (e.g., "*.example.com" becomes "example.com")
-            var domain = trimmed
-                .Replace("*.", string.Empty)
-                .Replace("||", string.Empty)
-                .Replace("^", string.Empty)
-                .Trim();
+            var domain = trimmed;
 
-            if (!string.IsNullOrEmpty(domain) && domain.Contains("."))
+            // Remove *. prefix
+            if (domain.StartsWith("*."))
+                domain = domain[2..];
+
+            // Remove || prefix (in case format varies)
+            if (domain.StartsWith("||"))
+                domain = domain[2..];
+
+            // Remove ^ suffix
+            if (domain.EndsWith("^"))
+                domain = domain[..^1];
+
+            domain = domain.Trim();
+
+            if (!domain.IsEmpty && domain.Contains('.'))
             {
-                domain = domain.ToLowerInvariant().TrimEnd('.');
-                domains.Add(domain);
+                domains.Add(domain.ToString().ToLowerInvariant());
             }
         }
 
