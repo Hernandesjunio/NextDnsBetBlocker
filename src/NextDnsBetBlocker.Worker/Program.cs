@@ -41,14 +41,19 @@ public static class Program
                     var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
                     var tableClient = tableServiceClient.GetTableClient("BlockedDomains");
                     var checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
+                    var suspectTableClient = tableServiceClient.GetTableClient("GamblingSuspects");
+
                     tableClient.CreateIfNotExists();
                     checkpointTableClient.CreateIfNotExists();
+                    suspectTableClient.CreateIfNotExists();
 
                     _checkpointTableClient = checkpointTableClient;
 
                     services.AddSingleton(tableClient);
+                    services.AddSingleton(suspectTableClient);
                     services.AddSingleton<IBlockedDomainStore>(sp => new BlockedDomainStore(tableClient, sp.GetRequiredService<ILogger<BlockedDomainStore>>()));
                     services.AddSingleton<ICheckpointStore>(sp => new CheckpointStore(checkpointTableClient, sp.GetRequiredService<ILogger<CheckpointStore>>()));
+                    services.AddSingleton<IGamblingSuspectStore>(sp => new GamblingSuspectStore(suspectTableClient, sp.GetRequiredService<ILogger<GamblingSuspectStore>>()));
                 }
                 else
                 {
@@ -100,6 +105,9 @@ public static class Program
                 // Seeder
                 services.AddSingleton<BlockedDomainsSeeder>();
 
+                // Gambling Suspect Analyzer
+                services.AddSingleton<IGamblingSuspectAnalyzer, GamblingSuspectAnalyzer>();
+
                 // Worker
                 services.AddSingleton<WorkerService>();
                 services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<WorkerService>());
@@ -126,9 +134,21 @@ public static class Program
             await SeedCheckpointAsync(_checkpointTableClient);
         }
 
-        //// Seed blocked domains from file (only once)
-        //var seeder = host.Services.GetRequiredService<BlockedDomainsSeeder>();
-        //var settings = host.Services.GetRequiredService<WorkerSettings>();
+        // Initialize GamblingSuspects table
+        try
+        {
+            var suspectStore = host.Services.GetRequiredService<IGamblingSuspectStore>();
+            await suspectStore.InitializeAsync();
+        }
+        catch (Exception ex)
+        {
+            // Log but don't fail startup if suspect table init fails
+            var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
+            var logger = loggerFactory.CreateLogger("GamblingSuspectInitialization");
+            logger.LogWarning(ex, "Failed to initialize GamblingSuspects table");
+        }
+
+        // Seed blocked domains from file (only once)
         //var blockedDomainsFile = Path.Combine(Directory.GetCurrentDirectory(), "data", "blocked.txt");
         //await seeder.SeedBlockedDomainsAsync(settings.NextDnsProfileId, blockedDomainsFile);
 
