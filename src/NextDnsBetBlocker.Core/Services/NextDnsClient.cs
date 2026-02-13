@@ -98,10 +98,12 @@ public class NextDnsClient : INextDnsClient
         var options = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
         var json = JsonSerializer.Serialize(request, options);
+        _logger.LogDebug("Sending denylist request: {Json}", json);
         var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
         var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
@@ -114,11 +116,13 @@ public class NextDnsClient : INextDnsClient
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Failed to add domain {Domain} to denylist: {StatusCode}", 
-                request.Id, response.StatusCode);
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogWarning("Failed to add domain {Domain} to denylist: {StatusCode} - {ErrorContent}", 
+                request.Id, response.StatusCode, errorContent);
             return false;
         }
 
+        _logger.LogInformation("Successfully added domain {Domain} to denylist", request.Id);
         return true;
     }
 

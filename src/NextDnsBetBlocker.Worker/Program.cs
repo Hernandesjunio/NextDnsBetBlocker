@@ -85,8 +85,7 @@ public static class Program
                 services.AddSingleton(containerClient);
                 services.AddSingleton<IHageziProvider>(sp =>
                     new HageziProvider(
-                        containerClient,
-                        Path.Combine(Directory.GetCurrentDirectory(), "data", "hagezi-gambling-domains.txt"),
+                        containerClient,                        
                         sp.GetRequiredService<IHttpClientFactory>(),
                         sp.GetRequiredService<ILogger<HageziProvider>>()));
 

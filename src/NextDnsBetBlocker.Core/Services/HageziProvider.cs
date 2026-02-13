@@ -8,7 +8,6 @@ public class HageziProvider : IHageziProvider
 {
     private readonly BlobContainerClient _containerClient;
     private readonly ILogger<HageziProvider> _logger;
-    private readonly string _localCachePath;
     private readonly IHttpClientFactory _httpClientFactory;
     private HashSet<string> _gamblingDomains = [];
     private DateTime _lastUpdate = DateTime.MinValue;
@@ -23,12 +22,10 @@ public class HageziProvider : IHageziProvider
 
     public HageziProvider(
         BlobContainerClient containerClient,
-        string localCachePath,
         IHttpClientFactory httpClientFactory,
         ILogger<HageziProvider> logger)
     {
         _containerClient = containerClient;
-        _localCachePath = localCachePath;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -41,10 +38,10 @@ public class HageziProvider : IHageziProvider
             return _gamblingDomains;
         }
 
-        // Try to load from local cache or blob storage
+        // Try to load from blob storage
         if (_gamblingDomains.Count == 0)
         {
-            await LoadFromCacheAsync();
+            await LoadFromBlobAsync();
         }
 
         return _gamblingDomains;
@@ -80,11 +77,7 @@ public class HageziProvider : IHageziProvider
             _logger.LogInformation("Parsed {WildcardCount} domains from wildcard format", wildcardDomains.Count);
             _logger.LogInformation("Total unique gambling domains after merge: {TotalCount}", domains.Count);
 
-            // Save to local cache
-            await File.WriteAllTextAsync(_localCachePath, string.Join(Environment.NewLine, domains));
-            _logger.LogInformation("Saved HaGeZi gambling list to local cache: {Path}", _localCachePath);
-
-            // Save to blob storage
+            // Save to blob storage only
             try
             {
                 var blobClientAdblock = _containerClient.GetBlobClient(BlobNameAdblock);
@@ -100,7 +93,8 @@ public class HageziProvider : IHageziProvider
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to upload HaGeZi gambling lists to blob storage, continuing with local cache");
+                _logger.LogWarning(ex, "Failed to upload HaGeZi gambling lists to blob storage");
+                throw;
             }
 
             _gamblingDomains = domains;
@@ -114,26 +108,8 @@ public class HageziProvider : IHageziProvider
         }
     }
 
-    private async Task LoadFromCacheAsync()
+    private async Task LoadFromBlobAsync()
     {
-        // Try local cache first
-        if (File.Exists(_localCachePath))
-        {
-            try
-            {
-                var content = await File.ReadAllTextAsync(_localCachePath);
-                _gamblingDomains = new HashSet<string>(content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
-                _lastUpdate = DateTime.UtcNow;
-                _logger.LogInformation("Loaded HaGeZi gambling list from local cache: {Count} domains", _gamblingDomains.Count);
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to load from local cache");
-            }
-        }
-
-        // Try blob storage (both adblock and wildcard formats)
         try
         {
             var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -185,7 +161,7 @@ public class HageziProvider : IHageziProvider
             _logger.LogWarning(ex, "Failed to load from blob storage");
         }
 
-        _logger.LogWarning("Could not load HaGeZi list from any source, using empty set");
+        _logger.LogWarning("Could not load HaGeZi list from blob storage, using empty set");
         _gamblingDomains = [];
     }
 
