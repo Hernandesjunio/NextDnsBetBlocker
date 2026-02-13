@@ -20,38 +20,78 @@ public class NextDnsClient : INextDnsClient
         _logger = logger;
     }
 
-    public async Task<NextDnsLogsResponse> GetLogsAsync(string profileId, string? cursor = null, int limit = 1000)
+    public async Task<NextDnsLogsResponse> GetLogsAsync(string profileId, string? cursor = null, int limit = 1000, DateTime? since = null)
     {
-        var url = $"{BaseUrl}/profiles/{profileId}/logs?limit={limit}&sort=asc";
-        if (!string.IsNullOrEmpty(cursor))
-        {
-            url += $"&cursor={Uri.EscapeDataString(cursor)}";
-        }
-
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("X-Api-Key", ApiKey);
-
-        var response = await RetryAsync(() => _httpClient.SendAsync(request));
-
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogError("Failed to fetch logs from NextDNS: {StatusCode}", response.StatusCode);
-            throw new HttpRequestException($"NextDNS returned {response.StatusCode}");
-        }
-
-        var content = await response.Content.ReadAsStringAsync();
-        var options = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        };
-
-        var result = JsonSerializer.Deserialize<NextDnsLogsResponse>(content, options) 
-            ?? new NextDnsLogsResponse();
-
-        return result;
+        return await GetLogsRangeAsync(profileId, cursor, limit, since, null);
     }
 
+    /// <summary>
+    /// Fetch logs with optional from/to range filtering
+    /// </summary>
+    public async Task<NextDnsLogsResponse> GetLogsRangeAsync(
+        string profileId,
+        string? cursor = null,
+        int limit = 1000,
+        DateTime? from = null,
+        DateTime? to = null)
+    {
+        try
+        {
+            var url = $"{BaseUrl}/profiles/{profileId}/logs?limit={limit}&sort=asc";
+
+            // Add from filter if provided
+            // NextDNS API uses 'from' and 'to' parameters (Unix timestamps)
+            if (from.HasValue)
+            {
+                var fromTimestamp = ((DateTimeOffset)from.Value.ToUniversalTime()).ToUnixTimeSeconds();
+                url += $"&from={fromTimestamp}";
+                _logger.LogDebug("Filtering logs from: {FromTimestamp} (Unix: {UnixTimestamp})", from.Value, fromTimestamp);
+            }
+
+            // Add to filter if provided
+            if (to.HasValue)
+            {
+                var toTimestamp = ((DateTimeOffset)to.Value.ToUniversalTime()).ToUnixTimeSeconds();
+                url += $"&to={toTimestamp}";
+                _logger.LogDebug("Filtering logs to: {ToTimestamp} (Unix: {UnixTimestamp})", to.Value, toTimestamp);
+            }
+
+            if (!string.IsNullOrEmpty(cursor))
+            {
+                url += $"&cursor={Uri.EscapeDataString(cursor)}";
+            }
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("X-Api-Key", ApiKey);
+
+            _logger.LogDebug("Requesting logs from URL: {Url}", url);
+            var response = await RetryAsync(() => _httpClient.SendAsync(request));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Failed to fetch logs from NextDNS: {StatusCode}", response.StatusCode);
+                throw new HttpRequestException($"NextDNS returned {response.StatusCode}");
+            }
+
+            var content = await response.Content.ReadAsStringAsync();
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
+
+            var result = JsonSerializer.Deserialize<NextDnsLogsResponse>(content, options)
+                ?? new NextDnsLogsResponse();
+
+            _logger.LogDebug("Received {LogCount} logs from NextDNS", result.Data.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching logs from NextDNS");
+            throw;
+        }
+    }
     public async Task<bool> AddToDenylistAsync(string profileId, DenylistBlockRequest request)
     {
         var url = $"{BaseUrl}/profiles/{profileId}/denylist";

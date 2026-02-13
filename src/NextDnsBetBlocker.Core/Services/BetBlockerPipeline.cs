@@ -62,8 +62,10 @@ public class BetBlockerPipeline : IBetBlockerPipeline
 
             do
             {
-                _logger.LogInformation("Fetching logs for profile {ProfileId}, cursor: {Cursor}", profileId, cursor ?? "initial");
-                var response = await _nextDnsClient.GetLogsAsync(profileId, cursor);
+                _logger.LogInformation("Fetching logs for profile {ProfileId}, cursor: {Cursor}, since: {Since}", 
+                    profileId, cursor ?? "initial", lastTimestamp?.ToString("O") ?? "beginning");
+
+                var response = await _nextDnsClient.GetLogsAsync(profileId, cursor, since: lastTimestamp);
 
                 if (response.Data.Count == 0)
                 {
@@ -74,10 +76,12 @@ public class BetBlockerPipeline : IBetBlockerPipeline
                 // Filter logs from checkpoint onwards and collect domains
                 foreach (var log in response.Data)
                 {
-                    if (log.Timestamp > (lastTimestamp ?? DateTime.MinValue))
+                    // Use >= instead of > to capture logs at the exact checkpoint timestamp
+                    if (log.Timestamp >= (lastTimestamp ?? DateTime.MinValue))
                     {
                         allDomains.Add(log.Domain);
                         newLastTimestamp = log.Timestamp > newLastTimestamp ? log.Timestamp : newLastTimestamp;
+                        _logger.LogDebug("Collecting domain {Domain} from timestamp {Timestamp}", log.Domain, log.Timestamp);
                     }
                 }
 
@@ -149,8 +153,15 @@ public class BetBlockerPipeline : IBetBlockerPipeline
             // Update checkpoint
             if (newLastTimestamp > (lastTimestamp ?? DateTime.MinValue))
             {
+                _logger.LogInformation("Updating checkpoint: Old={OldTimestamp}, New={NewTimestamp}", 
+                    (lastTimestamp ?? DateTime.MinValue).ToString("O"), newLastTimestamp.ToString("O"));
                 await _checkpointStore.UpdateLastTimestampAsync(profileId, newLastTimestamp);
-                _logger.LogInformation("Updated checkpoint to {Timestamp}", newLastTimestamp.ToString("O"));
+                _logger.LogInformation("✓ Checkpoint updated successfully to {Timestamp}", newLastTimestamp.ToString("O"));
+            }
+            else
+            {
+                _logger.LogWarning("⚠ Checkpoint NOT updated - newLastTimestamp ({New}) is NOT greater than lastTimestamp ({Last})", 
+                    newLastTimestamp.ToString("O"), (lastTimestamp ?? DateTime.MinValue).ToString("O"));
             }
 
             _logger.LogInformation("Pipeline completed successfully");

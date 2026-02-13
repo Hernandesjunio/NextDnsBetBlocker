@@ -23,12 +23,34 @@ public class CheckpointStore : ICheckpointStore
         {
             var response = await _tableClient.GetEntityAsync<TableEntity>(PartitionKey, profileId);
             if (response?.Value == null)
+            {
+                _logger.LogInformation("No checkpoint found for {ProfileId}", profileId);
                 return null;
+            }
 
             var entity = response.Value;
-            if (entity.TryGetValue("LastTimestamp", out var lastTimestamp) && lastTimestamp is DateTime dt)
+            if (entity.TryGetValue("LastTimestamp", out var lastTimestamp))
             {
-                _logger.LogInformation("Retrieved checkpoint for {ProfileId}: {Timestamp}", profileId, dt);
+                // Ensure it's treated as UTC
+                DateTime dt;
+                if (lastTimestamp is DateTimeOffset dtoValue)
+                {
+                    dt = DateTime.SpecifyKind(dtoValue.Date, DateTimeKind.Utc);
+                } else if (lastTimestamp is DateTime dtValue)
+                {
+                    dt = DateTime.SpecifyKind(dtValue, DateTimeKind.Utc);
+                }
+                else if (lastTimestamp is long unixTimestamp)
+                {
+                    dt = DateTimeOffset.FromUnixTimeSeconds(unixTimestamp).UtcDateTime;
+                }
+                else
+                {
+                    _logger.LogWarning("Could not parse timestamp for {ProfileId}", profileId);
+                    return null;
+                }
+
+                _logger.LogInformation("Retrieved checkpoint for {ProfileId}: {Timestamp} (Kind: {Kind})", profileId, dt, dt.Kind);
                 return dt;
             }
 
@@ -45,13 +67,17 @@ public class CheckpointStore : ICheckpointStore
     {
         try
         {
+            // Ensure timestamp is UTC
+            var utcTimestamp = timestamp.ToUniversalTime();
+
             var entity = new TableEntity(PartitionKey, profileId)
             {
-                { "LastTimestamp", timestamp }
+                { "LastTimestamp", utcTimestamp },
+                { "UpdatedAt", DateTime.UtcNow }
             };
 
             await _tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace);
-            _logger.LogInformation("Updated checkpoint for {ProfileId} to {Timestamp}", profileId, timestamp);
+            _logger.LogInformation("Updated checkpoint for {ProfileId} to {Timestamp} (Kind: {Kind})", profileId, utcTimestamp, utcTimestamp.Kind);
         }
         catch (Exception ex)
         {
