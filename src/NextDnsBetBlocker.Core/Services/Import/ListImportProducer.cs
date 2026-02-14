@@ -204,7 +204,7 @@ public class ListImportProducer : IListImportProducer
         if (line.Contains(','))
         {
             var fields = line.Split(',');
-            return fields[0].Trim().ToLowerInvariant();
+            return fields[1].Trim().ToLowerInvariant();
         }
 
         // Caso contrário, considerar a linha inteira como domínio

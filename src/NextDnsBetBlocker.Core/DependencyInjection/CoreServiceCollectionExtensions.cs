@@ -103,6 +103,14 @@ public static class CoreServiceCollectionExtensions
         // ============= HTTP CLIENT =============
         services.AddHttpClient<IListImportProducer, ListImportProducer>();
 
+        // ============= PARALLEL IMPORT CONFIG =============
+        services.AddOptions<ParallelImportConfig>()
+            .Bind(configuration.GetSection("ParallelImport"))
+            .ValidateOnStart();
+
+        services.AddSingleton<ParallelImportConfig>(sp =>
+            sp.GetRequiredService<IOptionsSnapshot<ParallelImportConfig>>().Value);
+
         // ============= IMPORT CONSUMER & ORCHESTRATOR =============
         services.AddSingleton<IListImportConsumer, ListImportConsumer>();
         services.AddSingleton<IListImportOrchestrator, ListImportOrchestrator>();
