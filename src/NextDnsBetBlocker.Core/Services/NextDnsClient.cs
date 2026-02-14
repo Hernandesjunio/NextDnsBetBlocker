@@ -126,6 +126,42 @@ public class NextDnsClient : INextDnsClient
         return true;
     }
 
+    public async Task<bool> AddToAllowlistAsync(string profileId, string domain)
+    {
+        var url = $"{BaseUrl}/profiles/{profileId}/allowlist";
+        var request = new { id = domain };
+
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        };
+
+        var json = JsonSerializer.Serialize(request, options);
+        _logger.LogDebug("Sending allowlist request: {Json}", json);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = content
+        };
+        httpRequest.Headers.Add("X-Api-Key", ApiKey);
+
+        var response = await RetryAsync(() => _httpClient.SendAsync(httpRequest));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogWarning("Failed to add domain {Domain} to allowlist: {StatusCode} - {ErrorContent}", 
+                domain, response.StatusCode, errorContent);
+            return false;
+        }
+
+        _logger.LogInformation("Successfully added domain {Domain} to allowlist", domain);
+        return true;
+    }
+
     private async Task<HttpResponseMessage> RetryAsync(
         Func<Task<HttpResponseMessage>> action,
         int maxRetries = 5)

@@ -21,6 +21,11 @@ public interface INextDnsClient
     /// Adds a domain to the denylist
     /// </summary>
     Task<bool> AddToDenylistAsync(string profileId, DenylistBlockRequest request);
+
+    /// <summary>
+    /// Adds a domain to the allowlist
+    /// </summary>
+    Task<bool> AddToAllowlistAsync(string profileId, string domain);
 }
 
 public interface ICheckpointStore
@@ -127,6 +132,33 @@ public interface IGamblingSuspectAnalyzer
     /// Analyze a domain for gambling indicators
     /// </summary>
     Task<AnalysisResult> AnalyzeDomainAsync(string domain);
+}
+
+public interface ITrancoAllowlistProvider
+{
+    /// <summary>
+    /// Gets the Tranco List (1M trusted domains) in memory with 24h cache
+    /// </summary>
+    Task<HashSet<string>> GetTrancoDomainsAsync();
+
+    /// <summary>
+    /// Force refresh Tranco List from URL
+    /// </summary>
+    Task RefreshAsync();
+}
+
+public interface ITrancoAllowlistConsumer
+{
+    /// <summary>
+    /// Consume suspicious domains and check against Tranco List
+    /// If found → allowlist automatically
+    /// If not found → forward for detailed analysis
+    /// </summary>
+    Task StartAsync(
+        Channel<SuspectDomainEntry> inputChannel,
+        Channel<SuspectDomainEntry> outputChannel,
+        string profileId,
+        CancellationToken cancellationToken);
 }
 
 public interface IBetBlockerPipeline

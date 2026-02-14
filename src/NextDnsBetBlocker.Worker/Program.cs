@@ -96,15 +96,26 @@ public static class Program
 
                 // Classifier and Pipeline
                 services.AddSingleton<IBetClassifier, BetClassifier>();
+
+                // Pipeline Consumers and Producer
+                services.AddSingleton<ILogsProducer, LogsProducer>();
+                services.AddSingleton<IClassifierConsumer, ClassifierConsumer>();
+                services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();
+                services.AddSingleton<ITrancoAllowlistConsumer, TrancoAllowlistConsumer>();
+                services.AddSingleton<IAnalysisConsumer, AnalysisConsumer>();
+
                 services.AddSingleton<IBetBlockerPipeline>(sp =>
                     new BetBlockerPipeline(
                         sp.GetRequiredService<INextDnsClient>(),
                         sp.GetRequiredService<ICheckpointStore>(),
                         sp.GetRequiredService<IBlockedDomainStore>(),
                         sp.GetRequiredService<IHageziProvider>(),
-                        sp.GetRequiredService<IAllowlistProvider>(),
                         sp.GetRequiredService<IBetClassifier>(),
                         sp.GetRequiredService<ILogger<BetBlockerPipeline>>(),
+                        sp.GetRequiredService<ILogsProducer>(),
+                        sp.GetRequiredService<IClassifierConsumer>(),
+                        sp.GetRequiredService<ITrancoAllowlistConsumer>(),
+                        sp.GetRequiredService<IAnalysisConsumer>(),
                         settings.RateLimitPerSecond));
 
                 // Seeder
@@ -112,11 +123,6 @@ public static class Program
 
                 // Gambling Suspect Analyzer
                 services.AddSingleton<IGamblingSuspectAnalyzer, GamblingSuspectAnalyzer>();
-
-                // Pipeline Consumers and Producer
-                services.AddSingleton<ILogsProducer, LogsProducer>();
-                services.AddSingleton<IClassifierConsumer, ClassifierConsumer>();
-                services.AddSingleton<IAnalysisConsumer, AnalysisConsumer>();
 
                 // Worker
                 services.AddSingleton<WorkerService>();
@@ -184,3 +190,4 @@ public static class Program
         }
     }
 }
+
