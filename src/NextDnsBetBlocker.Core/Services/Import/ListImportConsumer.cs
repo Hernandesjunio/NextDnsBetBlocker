@@ -63,10 +63,12 @@ public class ListImportConsumer : IListImportConsumer
             await _tableRepository.EnsureTableExistsAsync(config.TableName, cancellationToken);
 
             // Criar gerenciador paralelo
-            var batchManagerLogger = _logger as dynamic;  // ← Usar ILoggerFactory quando disponível
-            var batchManager = new ParallelBatchManager(_parallelConfig, new ParallelBatchManagerLogger(_logger));
+            var batchManagerLogger = new ParallelBatchManagerLogger(_logger);
+            var batchManager = new ParallelBatchManager(_parallelConfig, batchManagerLogger);
             var batchManagerMetrics = batchManager.GetMetrics();
-            var performanceMonitor = new PerformanceMonitor(config.MaxPartitions * 1_000_000);  // Estimativa
+            var adaptiveController = new AdaptiveParallelismController(_logger, _parallelConfig.MaxDegreeOfParallelism);
+            var failedBatches = new FailedBatchQueue();
+            var performanceMonitor = new PerformanceMonitor(config.MaxPartitions * 1_000_000);
             var performanceLogger = new PerformanceLogger(_logger, config.ListName);
             var progressStopwatch = Stopwatch.StartNew();
             int itemCount = 0;
@@ -132,8 +134,80 @@ public class ListImportConsumer : IListImportConsumer
 
                 // ✅ Phase 2: Flush será instrumentado no ParallelBatchManager
                 await batchManager.FlushAsync(
-                    async batch => await SendBatchAsync(batch, config.TableName, cancellationToken),
+                    async batch => await SendBatchAsync(batch, config.TableName, cancellationToken, adaptiveController, failedBatches),
                     cancellationToken);
+
+                // ✅ Phase 3: Reprocessar batches falhados com paralelismo reduzido
+                _logger.LogInformation("[Phase 3] Starting retry of failed batches | Queue size: {Count}", failedBatches.Count);
+
+                int retryAttempts = 0;
+                while (failedBatches.Count > 0 && retryAttempts < 5)  // Máximo 5 ciclos de retry
+                {
+                    retryAttempts++;
+                    var failedCount = failedBatches.Count;
+                    _logger.LogInformation("[Phase 3] Retry cycle {Attempt}: Processing {Count} failed batches with {Parallelism} concurrent tasks",
+                        retryAttempts, failedCount, adaptiveController.GetCurrentDegreeOfParallelism());
+
+                    var retryTasks = new List<Task>();
+                    var retrySemaphore = new SemaphoreSlim(adaptiveController.GetCurrentDegreeOfParallelism());
+
+                    while (failedBatches.TryDequeue(out var failedEntry))
+                    {
+                        if (failedEntry == null)
+                            continue;
+
+                        await retrySemaphore.WaitAsync(cancellationToken);
+
+                        var task = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await SendBatchAsync(failedEntry.Batch, config.TableName, cancellationToken, adaptiveController, null);
+                                // ✅ Sucesso - não adiciona de volta
+                            }
+                            catch
+                            {
+                                // Falhou novamente - adicionar de volta à fila
+                                failedBatches.Enqueue(failedEntry.Batch, failedEntry.PartitionKey, $"Retry attempt {failedEntry.AttemptCount + 1}");
+                                failedBatches.RecordRetry(failedEntry, "Retry failed");
+                            }
+                            finally
+                            {
+                                retrySemaphore.Release();
+                            }
+                        }, cancellationToken);
+
+                        retryTasks.Add(task);
+                    }
+
+                    if (retryTasks.Count > 0)
+                    {
+                        await Task.WhenAll(retryTasks);
+                    }
+
+                    retrySemaphore.Dispose();
+
+                    // Aguardar um pouco antes do próximo ciclo
+                    if (failedBatches.Count > 0)
+                    {
+                        await Task.Delay(5000, cancellationToken);
+                    }
+                }
+
+                // Log final de retry
+                var (totalFailed, totalRetried, remaining) = failedBatches.GetStats();
+                if (remaining > 0)
+                {
+                    _logger.LogError("[Phase 3] ⚠ {Remaining} batches still failed after 5 retry cycles", remaining);
+                }
+                else
+                {
+                    _logger.LogInformation("[Phase 3] ✓ All failed batches successfully reprocessed!");
+                }
+
+                var (timeouts, successes, current, initial) = adaptiveController.GetStats();
+                _logger.LogInformation("[Adaptive] Final stats: {Timeouts} timeouts detected | Parallelism adjusted: {Initial} → {Current} tasks",
+                    timeouts, initial, current);
 
                 // ✅ Log estatísticas finais (apenas PartitionRateLimiter metrics)
                 if (_partitionRateLimiter != null)
@@ -180,7 +254,9 @@ public class ListImportConsumer : IListImportConsumer
     private async Task SendBatchAsync(
         List<DomainListEntry> batch,
         string tableName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AdaptiveParallelismController adaptiveController = null,
+        FailedBatchQueue failedBatches = null)
     {
         if (batch == null || batch.Count == 0)
             return;
@@ -211,6 +287,7 @@ public class ListImportConsumer : IListImportConsumer
             if (result.IsSuccess)
             {
                 _metricsCollector.RecordBatchSuccess(batch.Count, stopwatch.ElapsedMilliseconds);
+                adaptiveController?.RecordSuccess();
 
                 // Record latency por partição
                 if (_partitionRateLimiter != null && batch.Count > 0)
@@ -229,17 +306,32 @@ public class ListImportConsumer : IListImportConsumer
                     batch[0].PartitionKey,
                     result.FailureCount,
                     result.ErrorMessage);
+
+                // Adicionar à fila de retry
+                failedBatches?.Enqueue(batch, batch[0].PartitionKey, result.ErrorMessage ?? "Unknown error");
             }
         }
         catch (Exception ex)
         {
             stopwatch.Stop();
             _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
+
+            // Detectar timeout e registrar
+            if (ex.Message.Contains("OperationTimedOut") || ex.InnerException?.Message.Contains("OperationTimedOut") == true)
+            {
+                adaptiveController?.RecordTimeout();
+                _logger.LogWarning(ex, "Batch timeout detected - adding to retry queue");
+            }
+
             _logger.LogError(
                 ex,
                 "Batch execution failed for partition {Partition}",
                 batch.Count > 0 ? batch[0].PartitionKey : "unknown");
-            throw;
+
+            // Adicionar à fila de retry
+            failedBatches?.Enqueue(batch, batch.Count > 0 ? batch[0].PartitionKey : "unknown", ex.Message);
+
+            // ❌ NÃO relançar - deixar com fila de retry
         }
     }
 
