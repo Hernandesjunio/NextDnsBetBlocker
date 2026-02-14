@@ -8,16 +8,18 @@ public class ParallelImportConfig
 {
     /// <summary>
     /// Grau máximo de paralelismo (tasks simultâneas)
-    /// Recomendado: 15 para atingir 18k ops/s
-    /// Intervalo: 5-30 (teste e ajuste conforme ambiente)
+    /// Recomendado: 50 para atingir 18k ops/s (9 partições × 2k ops/s cada)
+    /// ✅ AUMENTADO: Era 15, agora 50
+    /// Intervalo: 30-100 (teste e ajuste conforme ambiente)
     /// </summary>
-    public int MaxDegreeOfParallelism { get; set; } = 15;
+    public int MaxDegreeOfParallelism { get; set; } = 50;
 
     /// <summary>
     /// Máximo de batches por partição na fila
     /// Evita explosão de memória com muitas partições
+    /// ✅ AGORA: Apenas usado para alerta de backpressure (threshold)
     /// </summary>
-    public int MaxBatchesPerPartition { get; set; } = 5;
+    public int MaxBatchesPerPartition { get; set; } = 10;
 
     /// <summary>
     /// Máximo de partições simultâneas em voo

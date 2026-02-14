@@ -34,6 +34,7 @@ public class ParallelBatchManager : IDisposable
     /// <summary>
     /// Enfileirar uma entrada (domínio)
     /// Agrupa automaticamente por partição com rastreamento
+    /// Cria batch quando atinge 100 items (não MaxBatchesPerPartition * 100)
     /// </summary>
     public void Enqueue(DomainListEntry entry)
     {
@@ -47,15 +48,16 @@ public class ParallelBatchManager : IDisposable
             queue.CurrentBatch.Add(entry);
             queue.ItemCount++;
 
-            // Se batch completo, mover para fila de pendentes
-            if (queue.CurrentBatch.Count >= _config.MaxBatchesPerPartition * 100)
+            // Se batch atingiu 100 items (tamanho padrão), mover para fila de pendentes
+            // ✅ CORRIGIDO: Era MaxBatchesPerPartition * 100 (500 items!)
+            if (queue.CurrentBatch.Count >= 100)
             {
                 queue.PendingBatches.Enqueue(new List<DomainListEntry>(queue.CurrentBatch));
                 _metrics.RecordBatchCreated(partitionKey, queue.PendingBatches.Count);
                 queue.CurrentBatch.Clear();
 
                 // Registrar backpressure se fila está crescendo
-                if (queue.PendingBatches.Count >= _config.MaxBatchesPerPartition * 0.8)
+                if (queue.PendingBatches.Count >= 10)  // ← Threshold mais realista
                 {
                     _metrics.RecordBackpressureEvent(partitionKey);
                 }
