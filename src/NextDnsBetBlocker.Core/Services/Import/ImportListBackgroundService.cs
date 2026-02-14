@@ -2,12 +2,14 @@ namespace NextDnsBetBlocker.Core.Services.Import;
 
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 
 /// <summary>
 /// BackgroundService para importação automática de listas de domínios
-/// Executa importação em schedule (configurável via cron)
+/// Configuração lida via IOptions<ListImportConfig>
+/// Executa importação em schedule
 /// Suporta múltiplas listas (Tranco, Hagezi, etc)
 /// </summary>
 public class ImportListBackgroundService : BackgroundService
@@ -20,11 +22,11 @@ public class ImportListBackgroundService : BackgroundService
     public ImportListBackgroundService(
         ILogger<ImportListBackgroundService> logger,
         IListImporter importer,
-        ListImportConfig config)
+        IOptions<ListImportConfig> options)  // ← IOptions (fortemente tipado)
     {
         _logger = logger;
         _importer = importer;
-        _config = config;
+        _config = options.Value;  // ← Extrai o valor
     }
 
     public override async Task StartAsync(CancellationToken cancellationToken)
@@ -148,4 +150,3 @@ public class ImportListBackgroundService : BackgroundService
         }
     }
 }
-
