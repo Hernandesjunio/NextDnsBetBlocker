@@ -8,9 +8,9 @@ using System.Diagnostics;
 using System.Threading.Channels;
 
 /// <summary>
-/// Consumidor de dados para Table Storage com PARALELISMO
-/// Lê do channel, agrupa por partição e insere em paralelo
-/// Otimizado para atingir 18k ops/s usando paralelismo distribuído
+/// Consumidor de dados para Table Storage com PARALELISMO e OBSERVABILIDADE
+/// Lê do channel, agrupa por partição, insere em paralelo
+/// Otimizado para atingir 18k ops/s com logging detalhado de performance
 /// </summary>
 public class ListImportConsumer : IListImportConsumer
 {
@@ -62,14 +62,18 @@ public class ListImportConsumer : IListImportConsumer
             // Garantir que tabela existe
             await _tableRepository.EnsureTableExistsAsync(config.TableName, cancellationToken);
 
-            // Criar gerenciador paralelo
+            // Criar gerenciador paralelo e monitor de performance
             var batchManager = new ParallelBatchManager(_parallelConfig);
+            var performanceMonitor = new PerformanceMonitor(config.MaxPartitions * 1_000_000);  // Estimativa
+            var performanceLogger = new PerformanceLogger(_logger, config.ListName);
             var progressStopwatch = Stopwatch.StartNew();
             int itemCount = 0;
 
             try
             {
                 // Fase 1: Enfileirar items (agrupados por partição)
+                _logger.LogInformation("Phase 1: Queuing items from producer...");
+
                 await foreach (var domain in inputChannel.Reader.ReadAllAsync(cancellationToken))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -87,53 +91,59 @@ public class ListImportConsumer : IListImportConsumer
                     // Enfileirar no gerenciador paralelo
                     batchManager.Enqueue(entry);
                     itemCount++;
+                    performanceMonitor.IncrementProcessed(1);
 
-                    // Report progress periodicamente
-                    if (itemCount % 10000 == 0)
+                    // Report progress periodicamente (a cada 1%)
+                    if (itemCount % Math.Max(1000, itemCount / 100) == 0)
                     {
-                        _logger.LogInformation(
-                            "Queued {Count} items, Active tasks: {ActiveTasks}",
-                            itemCount,
-                            batchManager.GetActiveTaskCount());
+                        var progressStats = performanceMonitor.GetStats();
+                        performanceLogger.LogProgressPercentile(progressStats, percentileInterval: 1);
+                        performanceLogger.LogProgress(progressStats, intervalMs: 5000);
                     }
                 }
 
                 _logger.LogInformation(
-                    "Producer finished. Queued {Count} items. Starting parallel flush...",
+                    "Phase 1 completed. Queued {Count:N0} items. Starting Phase 2: Parallel flush...",
                     itemCount);
 
+                performanceMonitor = new PerformanceMonitor(itemCount);  // Reset com contagem real
+
                 // Fase 2: Flush paralelo
+                _logger.LogInformation("Phase 2: Starting parallel flush with {MaxParallelism} concurrent tasks...", _parallelConfig.MaxDegreeOfParallelism);
+
                 await batchManager.FlushAsync(
-                    async batch => await SendBatchAsync(batch, config.TableName, cancellationToken),
+                    async batch => await SendBatchAsync(batch, config.TableName, performanceMonitor, cancellationToken),
                     cancellationToken);
 
-                var finalMetrics = _metricsCollector.GetCurrentMetrics();
                 progressStopwatch.Stop();
+                var stats = performanceMonitor.GetStats();
 
-                _logger.LogInformation(
-                    "Consumer completed for {ListName}: Processed={Processed}, Inserted={Inserted}, Errors={Errors}, Time={Time}, Throughput={Throughput:F0} ops/s",
-                    config.ListName,
-                    finalMetrics.TotalProcessed,
-                    finalMetrics.TotalInserted,
-                    finalMetrics.TotalErrors,
-                    finalMetrics.ElapsedTime,
-                    finalMetrics.TotalProcessed / progressStopwatch.Elapsed.TotalSeconds);
+                // Log resumo final
+                performanceLogger.LogCompletionSummary(stats);
 
                 // Log métricas por partição
                 if (_partitionRateLimiter != null)
                 {
                     var partitionStats = _partitionRateLimiter.GetAllPartitionStats();
+                    var partitionSummaries = new Dictionary<string, PartitionSummary>();
+
                     foreach (var stat in partitionStats)
                     {
-                        _logger.LogInformation(
-                            "Partition {PartitionKey}: {OpsPerSec:F0} ops/s, Total: {Total}, AvgLatency: {LatencyMs:F2}ms",
-                            stat.Key,
-                            stat.Value.CurrentOpsPerSecond,
-                            stat.Value.TotalOperations,
-                            stat.Value.AverageLatencyMs);
+                        partitionSummaries[stat.Key] = new PartitionSummary
+                        {
+                            PartitionKey = stat.Key,
+                            Throughput = stat.Value.CurrentOpsPerSecond,
+                            TotalItems = (int)stat.Value.TotalOperations,
+                            AverageLatency = stat.Value.AverageLatencyMs,
+                            P99Latency = 0  // Poderia adicionar se tivesse em PartitionStats
+                        };
                     }
+
+                    performanceLogger.LogPartitionsSummary(partitionSummaries);
                 }
 
+                // Report final metrics
+                var finalMetrics = _metricsCollector.GetCurrentMetrics();
                 progress.Report(new ImportProgress { Metrics = finalMetrics });
             }
             finally
@@ -156,6 +166,7 @@ public class ListImportConsumer : IListImportConsumer
     private async Task SendBatchAsync(
         List<DomainListEntry> batch,
         string tableName,
+        PerformanceMonitor performanceMonitor,
         CancellationToken cancellationToken)
     {
         if (batch == null || batch.Count == 0)
@@ -187,6 +198,8 @@ public class ListImportConsumer : IListImportConsumer
             if (result.IsSuccess)
             {
                 _metricsCollector.RecordBatchSuccess(batch.Count, stopwatch.ElapsedMilliseconds);
+                performanceMonitor.IncrementProcessed(batch.Count);
+                performanceMonitor.RecordLatency(stopwatch.ElapsedMilliseconds);
 
                 // Record latency por partição
                 if (_partitionRateLimiter != null && batch.Count > 0)
@@ -199,6 +212,9 @@ public class ListImportConsumer : IListImportConsumer
             else
             {
                 _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
+                performanceMonitor.IncrementFailed(batch.Count);
+                performanceMonitor.RecordLatency(stopwatch.ElapsedMilliseconds);
+
                 _logger.LogWarning(
                     "Batch failed: {BatchId}, Partition: {Partition}, Errors={Errors}, Message={Message}",
                     result.BatchId,
@@ -211,6 +227,9 @@ public class ListImportConsumer : IListImportConsumer
         {
             stopwatch.Stop();
             _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
+            performanceMonitor.IncrementFailed(batch.Count);
+            performanceMonitor.RecordLatency(stopwatch.ElapsedMilliseconds);
+
             _logger.LogError(
                 ex,
                 "Batch execution failed for partition {Partition}",
