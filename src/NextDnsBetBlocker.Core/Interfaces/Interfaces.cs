@@ -137,14 +137,27 @@ public interface IGamblingSuspectAnalyzer
 public interface ITrancoAllowlistProvider
 {
     /// <summary>
-    /// Gets the Tranco List (1M trusted domains) in memory with 24h cache
+    /// DEPRECATED: Gets the Tranco List in memory with 24h cache
+    /// Returns empty HashSet - use DomainExistsAsync instead
     /// </summary>
     Task<HashSet<string>> GetTrancoDomainsAsync();
 
     /// <summary>
-    /// Force refresh Tranco List from URL
+    /// Verifica se domínio existe na Tranco List (Table Storage)
+    /// Query eficiente com cache 5 minutos
     /// </summary>
-    Task RefreshAsync();
+    Task<bool> DomainExistsAsync(string domain, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Force refresh Tranco List from URL
+    /// Executa diff import (apenas mudanças)
+    /// </summary>
+    Task RefreshAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retorna contagem total de domínios na Tranco List
+    /// </summary>
+    Task<long> GetTotalCountAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ITrancoAllowlistConsumer

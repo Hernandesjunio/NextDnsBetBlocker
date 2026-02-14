@@ -8,21 +8,24 @@ using System.Threading.Channels;
 
 /// <summary>
 /// Consumidor que verifica domínios contra Tranco List
+/// REFATORADO: Usa Table Storage queries ao invés de HashSet em memória
 /// Se encontrado → allowlist automaticamente
 /// Se não encontrado → passa para análise suspeita
 /// </summary>
 public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
 {
-    private readonly ITrancoAllowlistProvider _trancoProvider;
+    private readonly IListTableProvider _tableProvider;
     private readonly INextDnsClient _nextDnsClient;
     private readonly ILogger<TrancoAllowlistConsumer> _logger;
 
+    private const string TrancoTableName = "TrancoList";
+
     public TrancoAllowlistConsumer(
-        ITrancoAllowlistProvider trancoProvider,
+        IListTableProvider tableProvider,
         INextDnsClient nextDnsClient,
         ILogger<TrancoAllowlistConsumer> logger)
     {
-        _trancoProvider = trancoProvider;
+        _tableProvider = tableProvider;
         _nextDnsClient = nextDnsClient;
         _logger = logger;
     }
@@ -37,9 +40,6 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
         {
             _logger.LogInformation("TrancoAllowlistConsumer started for profile {ProfileId}", profileId);
 
-            var trancoList = await _trancoProvider.GetTrancoDomainsAsync();
-            _logger.LogInformation("Loaded {Count} trusted domains from Tranco List", trancoList.Count);
-
             int processed = 0;
             int allowlisted = 0;
             int suspect = 0;
@@ -53,8 +53,14 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
 
                 var domain = logEntry.Domain.ToLowerInvariant();
 
-                // Check if domain is in Tranco List (trusted)
-                if (trancoList.Contains(domain))
+                // Check if domain exists in Tranco List (Table Storage query)
+                // Eficiente: point query + cache 5 minutos
+                var exists = await _tableProvider.DomainExistsAsync(
+                    TrancoTableName,
+                    domain,
+                    cancellationToken);
+
+                if (exists)
                 {
                     // Add to allowlist in NextDNS
                     try
@@ -88,12 +94,12 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
                 await outputChannel.Writer.WriteAsync(suspectEntry, cancellationToken);
 
                 if (processed % 100 == 0)
-                    _logger.LogDebug("Processed {Total} suspects, allowlisted: {Allowlisted}, suspect: {Fuspect}", 
+                    _logger.LogDebug("Processed {Total} domains, allowlisted: {Allowlisted}, suspect: {Suspect}", 
                         processed, allowlisted, suspect);
             }
 
             _logger.LogInformation(
-                "TrancoAllowlistConsumer completed: Processed={Processed}, Allowlisted={Allowlisted}, Fuspect={Fuspect}",
+                "TrancoAllowlistConsumer completed: Processed={Processed}, Allowlisted={Allowlisted}, Suspect={Suspect}",
                 processed, allowlisted, suspect);
         }
         catch (OperationCanceledException)
@@ -112,3 +118,4 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
         }
     }
 }
+
