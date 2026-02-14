@@ -62,8 +62,9 @@ public class ListImportConsumer : IListImportConsumer
             // Garantir que tabela existe
             await _tableRepository.EnsureTableExistsAsync(config.TableName, cancellationToken);
 
-            // Criar gerenciador paralelo e monitor de performance
-            var batchManager = new ParallelBatchManager(_parallelConfig);
+            // Criar gerenciador paralelo
+            var batchManagerLogger = _logger as dynamic;  // ← Usar ILoggerFactory quando disponível
+            var batchManager = new ParallelBatchManager(_parallelConfig, new ParallelBatchManagerLogger(_logger));
             var batchManagerMetrics = batchManager.GetMetrics();
             var performanceMonitor = new PerformanceMonitor(config.MaxPartitions * 1_000_000);  // Estimativa
             var performanceLogger = new PerformanceLogger(_logger, config.ListName);
@@ -129,42 +130,12 @@ public class ListImportConsumer : IListImportConsumer
                     maxQueueDepth,
                     backpressureEvents);
 
-                performanceMonitor = new PerformanceMonitor(itemCount);  // Reset com contagem real
-
-                // Fase 2: Flush paralelo
-                _logger.LogInformation("Phase 2: Starting parallel flush with {MaxParallelism} concurrent tasks...", _parallelConfig.MaxDegreeOfParallelism);
-
+                // ✅ Phase 2: Flush será instrumentado no ParallelBatchManager
                 await batchManager.FlushAsync(
-                    async batch => await SendBatchAsync(batch, config.TableName, performanceMonitor, cancellationToken),
+                    async batch => await SendBatchAsync(batch, config.TableName, cancellationToken),
                     cancellationToken);
 
-                progressStopwatch.Stop();
-                var stats = performanceMonitor.GetStats();
-
-                // Log resumo final
-                performanceLogger.LogCompletionSummary(stats);
-
-                // Log estatísticas finais de flushing
-                var flushMetrics = batchManagerMetrics.GetPartitionMetrics();
-                if (flushMetrics.Count > 0)
-                {
-                    _logger.LogInformation("[{ListName}] Flush Statistics:", config.ListName);
-                    foreach (var partition in flushMetrics.OrderBy(x => x.Key))
-                    {
-                        _logger.LogInformation(
-                            "[{ListName}]   Partition {Key}: {Batches} batches processed | Backpressure hits: {BP}",
-                            config.ListName,
-                            partition.Key,
-                            partition.Value.BatchesCreated,
-                            partition.Value.BackpressureCount);
-                    }
-                }
-
-                // Log distribuição final
-                var finalDistribution = batchManagerMetrics.GetItemsDistribution();
-                performanceLogger.LogLoadDistribution(finalDistribution);
-
-                // Log métricas por partição
+                // ✅ Log estatísticas finais (apenas PartitionRateLimiter metrics)
                 if (_partitionRateLimiter != null)
                 {
                     var partitionStats = _partitionRateLimiter.GetAllPartitionStats();
@@ -178,7 +149,7 @@ public class ListImportConsumer : IListImportConsumer
                             Throughput = stat.Value.CurrentOpsPerSecond,
                             TotalItems = (int)stat.Value.TotalOperations,
                             AverageLatency = stat.Value.AverageLatencyMs,
-                            P99Latency = 0  // Poderia adicionar se tivesse em PartitionStats
+                            P99Latency = 0
                         };
                     }
 
@@ -209,7 +180,6 @@ public class ListImportConsumer : IListImportConsumer
     private async Task SendBatchAsync(
         List<DomainListEntry> batch,
         string tableName,
-        PerformanceMonitor performanceMonitor,
         CancellationToken cancellationToken)
     {
         if (batch == null || batch.Count == 0)
@@ -241,8 +211,6 @@ public class ListImportConsumer : IListImportConsumer
             if (result.IsSuccess)
             {
                 _metricsCollector.RecordBatchSuccess(batch.Count, stopwatch.ElapsedMilliseconds);
-                performanceMonitor.IncrementProcessed(batch.Count);
-                performanceMonitor.RecordLatency(stopwatch.ElapsedMilliseconds);
 
                 // Record latency por partição
                 if (_partitionRateLimiter != null && batch.Count > 0)
@@ -255,9 +223,6 @@ public class ListImportConsumer : IListImportConsumer
             else
             {
                 _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
-                performanceMonitor.IncrementFailed(batch.Count);
-                performanceMonitor.RecordLatency(stopwatch.ElapsedMilliseconds);
-
                 _logger.LogWarning(
                     "Batch failed: {BatchId}, Partition: {Partition}, Errors={Errors}, Message={Message}",
                     result.BatchId,
@@ -270,9 +235,6 @@ public class ListImportConsumer : IListImportConsumer
         {
             stopwatch.Stop();
             _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
-            performanceMonitor.IncrementFailed(batch.Count);
-            performanceMonitor.RecordLatency(stopwatch.ElapsedMilliseconds);
-
             _logger.LogError(
                 ex,
                 "Batch execution failed for partition {Partition}",
