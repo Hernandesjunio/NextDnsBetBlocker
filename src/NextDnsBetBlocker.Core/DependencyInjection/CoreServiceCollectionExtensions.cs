@@ -166,6 +166,33 @@ public static class CoreServiceCollectionExtensions
 
         services.AddSingleton<TrancoListImporter>();
 
+        // ============= HAGEZI LIST IMPORTER (with IOptions) =============
+        services.AddOptions<ListImportConfig>("Hagezi")
+            .Bind(configuration.GetSection("ListImport:Hagezi"))
+            .ValidateOnStart();
+
+        // ============= HAGEZI PROVIDER CONFIG (with IOptions) =============
+        services.AddOptions<HageziProviderConfig>()
+            .Bind(configuration.GetSection("HaGeZi"))
+            .ValidateOnStart();
+
+        // Register HageziProvider for Importer layer
+        services.AddSingleton<IHageziProvider>(sp =>
+        {
+            var connString = settings.AzureStorageConnectionString;
+            var blobServiceClient = new BlobServiceClient(connString);
+            var containerClient = blobServiceClient.GetBlobContainerClient("hagezi-lists");
+
+            return new HageziProvider(
+                containerClient,
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<ILogger<HageziProvider>>(),
+                sp.GetRequiredService<IOptions<HageziProviderConfig>>());
+        });
+
+        // Register HageziListImporter
+        services.AddSingleton<HageziListImporter>();
+
         // ============= TRANCO ALLOW LIST PROVIDER =============
         services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();
 
@@ -233,6 +260,14 @@ public static class CoreServiceCollectionExtensions
         {
             var blobServiceClient = new BlobServiceClient(settings.AzureStorageConnectionString);
             containerClient = blobServiceClient.GetBlobContainerClient("hagezi-gambling");
+
+            services.AddSingleton(containerClient);
+            services.AddSingleton<IHageziProvider>(sp =>
+                new HageziProvider(
+                    containerClient,
+                    sp.GetRequiredService<IHttpClientFactory>(),
+                    sp.GetRequiredService<ILogger<HageziProvider>>(),
+                    sp.GetRequiredService<IOptions<HageziProviderConfig>>()));  // ← Injetar IOptions
         }
         else
         {
@@ -242,17 +277,6 @@ public static class CoreServiceCollectionExtensions
             var localPath = Path.Combine(Directory.GetCurrentDirectory(), "data");
             Directory.CreateDirectory(localPath);
             containerClient = null; // Will be set by Worker if needed
-        }
-
-        if (containerClient != null)
-        {
-            services.AddSingleton(containerClient);
-            services.AddSingleton<IHageziProvider>(sp =>
-                new HageziProvider(
-                    containerClient,
-                    sp.GetRequiredService<IHttpClientFactory>(),
-                    sp.GetRequiredService<ILogger<HageziProvider>>(),
-                    sp.GetRequiredService<IOptions<HageziProviderConfig>>()));  // ← Injetar IOptions
         }
 
         // ============= ALLOWLIST PROVIDER =============
