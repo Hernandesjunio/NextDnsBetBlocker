@@ -43,7 +43,7 @@ public class WorkerService : BackgroundService
     // Cada task com seu próprio timer
     private async Task ProcessLogsPeriodicAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_settings.ProcessingIntervalMinutes));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(_settings.ProcessingIntervalSeconds));
 
         try
         {

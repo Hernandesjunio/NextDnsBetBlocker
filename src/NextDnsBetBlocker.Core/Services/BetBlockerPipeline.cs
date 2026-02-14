@@ -77,11 +77,12 @@ public class BetBlockerPipeline : IBetBlockerPipeline
             try
             {
                 // Run all pipeline stages in parallel
+                // Order: LogsProducer -> TrancoAllowlistConsumer -> ClassifierConsumer -> AnalysisConsumer
                 var tasks = new[]
                 {
                     _logsProducer.StartAsync(logsChannel, profileId, cts.Token),
-                    _classifierConsumer.StartAsync(logsChannel, suspectsChannel, profileId, cts.Token),
-                    _trancoAllowlistConsumer.StartAsync(suspectsChannel, trancoFilteredChannel, profileId, cts.Token),
+                    _trancoAllowlistConsumer.StartAsync(logsChannel, suspectsChannel, profileId, cts.Token),
+                    _classifierConsumer.StartAsync(suspectsChannel, trancoFilteredChannel, profileId, cts.Token),
                     _analysisConsumer.StartAsync(trancoFilteredChannel, profileId, cts.Token)
                 };
 

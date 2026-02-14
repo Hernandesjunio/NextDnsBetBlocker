@@ -33,7 +33,7 @@ public class ClassifierConsumer : IClassifierConsumer
     }
 
     public async Task StartAsync(
-        Channel<LogEntryData> inputChannel,
+        Channel<SuspectDomainEntry> inputChannel,
         Channel<SuspectDomainEntry> outputChannel,
         string profileId,
         CancellationToken cancellationToken)
@@ -94,17 +94,11 @@ public class ClassifierConsumer : IClassifierConsumer
                 }
 
                 // Domain is suspicious - send to analysis
-                suspects++;
-                var suspectEntry = new SuspectDomainEntry
-                {
-                    Domain = domain,
-                    FirstSeen = logEntry.Timestamp,
-                    ProfileId = profileId,
-                    ClassificationScore = 0 // Will be set by analyzer
-                };
+                //suspects++;
+                
 
                 // Send with backpressure (waits if output channel buffer is full)
-                await outputChannel.Writer.WriteAsync(suspectEntry, cancellationToken);
+                await outputChannel.Writer.WriteAsync(logEntry, cancellationToken);
 
                 if (processed % 100 == 0)
                     _logger.LogDebug("Classified {Processed} logs, suspects: {Suspects}", processed, suspects);

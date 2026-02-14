@@ -155,7 +155,7 @@ public interface ITrancoAllowlistConsumer
     /// If not found → forward for detailed analysis
     /// </summary>
     Task StartAsync(
-        Channel<SuspectDomainEntry> inputChannel,
+        Channel<LogEntryData> inputChannel,
         Channel<SuspectDomainEntry> outputChannel,
         string profileId,
         CancellationToken cancellationToken);
@@ -190,7 +190,7 @@ public interface IClassifierConsumer
     /// Filters logs based on allowlist, HaGeZi, and BetClassifier
     /// </summary>
     Task StartAsync(
-        Channel<LogEntryData> inputChannel,
+        Channel<SuspectDomainEntry> inputChannel,
         Channel<SuspectDomainEntry> outputChannel,
         string profileId,
         CancellationToken cancellationToken);

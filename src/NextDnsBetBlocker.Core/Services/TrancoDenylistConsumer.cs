@@ -1,9 +1,10 @@
 namespace NextDnsBetBlocker.Core.Services;
 
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
+using System.Threading.Channels;
 
 /// <summary>
 /// Consumidor que verifica domínios contra Tranco List
@@ -27,7 +28,7 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
     }
 
     public async Task StartAsync(
-        Channel<SuspectDomainEntry> inputChannel,
+        Channel<LogEntryData> inputChannel,
         Channel<SuspectDomainEntry> outputChannel,
         string profileId,
         CancellationToken cancellationToken)
@@ -41,16 +42,16 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
 
             int processed = 0;
             int allowlisted = 0;
-            int forwarded = 0;
+            int suspect = 0;
 
             // Read all suspects from input channel
-            await foreach (var suspectEntry in inputChannel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var logEntry in inputChannel.Reader.ReadAllAsync(cancellationToken))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 processed++;
 
-                var domain = suspectEntry.Domain.ToLowerInvariant();
+                var domain = logEntry.Domain.ToLowerInvariant();
 
                 // Check if domain is in Tranco List (trusted)
                 if (trancoList.Contains(domain))
@@ -74,17 +75,26 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
                 }
 
                 // Domain not in Tranco List - forward for analysis
-                forwarded++;
+                suspect++;
+
+                var suspectEntry = new SuspectDomainEntry
+                {
+                    Domain = domain,
+                    FirstSeen = logEntry.Timestamp,
+                    ProfileId = profileId,
+                    ClassificationScore = 0 // Will be set by analyzer
+                };
+
                 await outputChannel.Writer.WriteAsync(suspectEntry, cancellationToken);
 
                 if (processed % 100 == 0)
-                    _logger.LogDebug("Processed {Total} suspects, allowlisted: {Allowlisted}, forwarded: {Forwarded}", 
-                        processed, allowlisted, forwarded);
+                    _logger.LogDebug("Processed {Total} suspects, allowlisted: {Allowlisted}, suspect: {Fuspect}", 
+                        processed, allowlisted, suspect);
             }
 
             _logger.LogInformation(
-                "TrancoAllowlistConsumer completed: Processed={Processed}, Allowlisted={Allowlisted}, Forwarded={Forwarded}",
-                processed, allowlisted, forwarded);
+                "TrancoAllowlistConsumer completed: Processed={Processed}, Allowlisted={Allowlisted}, Fuspect={Fuspect}",
+                processed, allowlisted, suspect);
         }
         catch (OperationCanceledException)
         {
