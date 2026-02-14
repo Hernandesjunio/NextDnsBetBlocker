@@ -1,13 +1,13 @@
 namespace NextDnsBetBlocker.Core.Services.Import;
 
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 
 /// <summary>
 /// Importador específico para Tranco List
-/// Configuração lida do appsettings.json
+/// Configuração lida do appsettings.json via IOptions
 /// </summary>
 public class TrancoListImporter
 {
@@ -18,26 +18,13 @@ public class TrancoListImporter
     public TrancoListImporter(
         IListImporter genericImporter,
         ILogger<TrancoListImporter> logger,
-        IConfiguration configuration)
+        IOptions<ListImportConfig> options)
     {
         _genericImporter = genericImporter;
         _logger = logger;
 
-        // ✅ Ler configuração do appsettings.json
-        var trancoSection = configuration.GetSection("ListImport:TrancoList");
-
-        // Usar valores do config, com fallbacks para defaults
-        _config = new ListImportConfig
-        {
-            ListName = trancoSection.GetValue<string>("ListName") ?? "TrancoList",
-            SourceUrl = trancoSection.GetValue<string>("SourceUrl") ?? "https://tranco-list.eu/top-1m.csv.zip",
-            TableName = trancoSection.GetValue<string>("TableName") ?? "TrancoList",
-            BlobContainer = trancoSection.GetValue<string>("BlobContainer") ?? "tranco-lists",
-            BatchSize = trancoSection.GetValue<int>("BatchSize", 100),
-            MaxPartitions = trancoSection.GetValue<int>("MaxPartitions", 10),
-            ThrottleOperationsPerSecond = trancoSection.GetValue<int>("ThrottleOperationsPerSecond", 150000),
-            ChannelCapacity = trancoSection.GetValue<int>("ChannelCapacity", 10000)
-        };
+        // ✅ Injetar via IOptions (strongly typed)
+        _config = options.Value;
 
         _logger.LogInformation(
             "TrancoListImporter configured: URL={Url}, BatchSize={BatchSize}, Partitions={Partitions}",

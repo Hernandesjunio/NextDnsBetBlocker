@@ -150,7 +150,11 @@ public static class CoreServiceCollectionExtensions
                 sp.GetRequiredService<IListTableStorageRepository>());
         });
 
-        // ============= TRANCO LIST IMPORTER =============
+        // ============= TRANCO LIST IMPORTER (with IOptions) =============
+        services.AddOptions<ListImportConfig>()
+            .Bind(configuration.GetSection("ListImport:TrancoList"))
+            .ValidateOnStart();
+
         services.AddSingleton<TrancoListImporter>();
 
         // ============= TRANCO ALLOW LIST PROVIDER =============
