@@ -152,8 +152,6 @@ public static class CoreServiceCollectionExtensions
 
         // ============= TRANCO LIST IMPORTER =============
         services.AddSingleton<TrancoListImporter>();
-        var trancoConfig = TrancoListImporter.CreateConfig();
-        services.AddSingleton(trancoConfig);
 
         // ============= TRANCO ALLOW LIST PROVIDER =============
         services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();

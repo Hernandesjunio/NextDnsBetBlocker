@@ -1,12 +1,13 @@
 namespace NextDnsBetBlocker.Core.Services.Import;
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 
 /// <summary>
 /// Importador específico para Tranco List
-/// Configuração e customizações para fonte Tranco
+/// Configuração lida do appsettings.json
 /// </summary>
 public class TrancoListImporter
 {
@@ -16,23 +17,33 @@ public class TrancoListImporter
 
     public TrancoListImporter(
         IListImporter genericImporter,
-        ILogger<TrancoListImporter> logger)
+        ILogger<TrancoListImporter> logger,
+        IConfiguration configuration)
     {
         _genericImporter = genericImporter;
         _logger = logger;
-        
-        // Configuração padrão para Tranco
+
+        // ✅ Ler configuração do appsettings.json
+        var trancoSection = configuration.GetSection("ListImport:TrancoList");
+
+        // Usar valores do config, com fallbacks para defaults
         _config = new ListImportConfig
         {
-            ListName = "TrancoList",
-            SourceUrl = "https://tranco-list.eu/top-1m.csv.zip",
-            TableName = "TrancoList",
-            BlobContainer = "tranco-lists",
-            BatchSize = 100,
-            MaxPartitions = 10,
-            ThrottleOperationsPerSecond = 150000,
-            ChannelCapacity = 10000
+            ListName = trancoSection.GetValue<string>("ListName") ?? "TrancoList",
+            SourceUrl = trancoSection.GetValue<string>("SourceUrl") ?? "https://tranco-list.eu/top-1m.csv.zip",
+            TableName = trancoSection.GetValue<string>("TableName") ?? "TrancoList",
+            BlobContainer = trancoSection.GetValue<string>("BlobContainer") ?? "tranco-lists",
+            BatchSize = trancoSection.GetValue<int>("BatchSize", 100),
+            MaxPartitions = trancoSection.GetValue<int>("MaxPartitions", 10),
+            ThrottleOperationsPerSecond = trancoSection.GetValue<int>("ThrottleOperationsPerSecond", 150000),
+            ChannelCapacity = trancoSection.GetValue<int>("ChannelCapacity", 10000)
         };
+
+        _logger.LogInformation(
+            "TrancoListImporter configured: URL={Url}, BatchSize={BatchSize}, Partitions={Partitions}",
+            _config.SourceUrl,
+            _config.BatchSize,
+            _config.MaxPartitions);
     }
 
     /// <summary>
@@ -59,8 +70,8 @@ public class TrancoListImporter
     }
 
     /// <summary>
-    /// Configuração customizada para Tranco
-    /// Permite override de parâmetros
+    /// Factory method para criar config (compatibilidade)
+    /// Nota: Preferir injetar TrancoListImporter ao invés de usar este método
     /// </summary>
     public static ListImportConfig CreateConfig(
         string? sourceUrl = null,
