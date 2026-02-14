@@ -136,12 +136,7 @@ public interface IGamblingSuspectAnalyzer
 
 public interface ITrancoAllowlistProvider
 {
-    /// <summary>
-    /// DEPRECATED: Gets the Tranco List in memory with 24h cache
-    /// Returns empty HashSet - use DomainExistsAsync instead
-    /// </summary>
-    Task<HashSet<string>> GetTrancoDomainsAsync();
-
+    
     /// <summary>
     /// Verifica se domínio existe na Tranco List (Table Storage)
     /// Query eficiente com cache 5 minutos

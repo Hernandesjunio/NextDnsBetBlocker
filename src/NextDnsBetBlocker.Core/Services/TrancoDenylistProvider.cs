@@ -27,21 +27,7 @@ public class TrancoAllowlistProvider : ITrancoAllowlistProvider
         _listImporter = listImporter;
         _logger = logger;
     }
-
-    /// <summary>
-    /// DEPRECATED: Mantém compatibilidade mas retorna HashSet vazio
-    /// Use DomainExistsAsync() ao invés
-    /// </summary>
-    public async Task<HashSet<string>> GetTrancoDomainsAsync()
-    {
-        _logger.LogWarning(
-            "GetTrancoDomainsAsync is DEPRECATED. Use TrancoAllowlistConsumer.CheckDomainAsync() instead. " +
-            "This method returns empty set to avoid memory overhead.");
-        
-        // Retorna vazio para forçar uso de DomainExistsAsync
-        return [];
-    }
-
+       
     /// <summary>
     /// Verifica se domínio existe na Tranco List (Table Storage)
     /// Query eficiente com cache 5 minutos

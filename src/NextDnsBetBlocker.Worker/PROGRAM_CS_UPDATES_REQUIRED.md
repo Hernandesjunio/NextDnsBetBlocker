@@ -1,7 +1,7 @@
 ## MANUAL UPDATES REQUIRED FOR Program.cs
 
-### 1. Add Import Statement
-Add this line after the existing using statements (around line 3):
+### 1. Add Import Statements
+Add these lines after the existing using statements (around line 3):
 ```csharp
 using Microsoft.Extensions.Caching.Memory;
 using NextDnsBetBlocker.Core.Models;
@@ -104,3 +104,77 @@ services.AddHostedService<ImportListBackgroundService>();
 
 // ============= END IMPORT SERVICES =============
 ```
+
+---
+
+## 4. Add Table Initialization (CRITICAL)
+
+After `.Build()` (around line 145), add this code BEFORE running the host:
+
+```csharp
+var host = new HostBuilder()
+    // ... all configuration ...
+    .Build();
+
+// ============= INITIALIZE LIST TABLES =============
+try
+{
+    var tableInitializer = host.Services.GetRequiredService<ListTableInitializer>();
+    await tableInitializer.InitializeAllTablesAsync();
+
+    _logger.LogInformation("All list tables initialized successfully");
+}
+catch (Exception ex)
+{
+    var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
+    var logger = loggerFactory.CreateLogger("ListTableInitialization");
+    logger.LogError(ex, "Failed to initialize list tables");
+    throw; // Fail startup if table initialization fails
+}
+// ============= END TABLE INITIALIZATION =============
+
+// Seed checkpoint data before running
+if (_checkpointTableClient != null)
+{
+    await SeedCheckpointAsync(_checkpointTableClient);
+}
+
+// ... rest of initialization ...
+
+await host.RunAsync();
+```
+
+**IMPORTANTE**: Este passo **MUST** acontecer APÓS `.Build()` e ANTES de `await host.RunAsync()`
+
+---
+
+## 5. Register ListTableInitializer in DI (Inside ConfigureServices)
+
+Add this BEFORE the settings are used (around line 125):
+
+```csharp
+// List Table Initializer
+services.AddSingleton<ListTableInitializer>();
+```
+
+---
+
+## 📝 Summary of Changes
+
+1. ✅ Add 3 using statements
+2. ✅ Update Pipeline section (add IListTableProvider + TrancoAllowlistProvider)
+3. ✅ Add 40 lines of Import Services DI registration
+4. ✅ Add ListTableInitializer DI registration
+5. ✅ Add table initialization in startup (critical)
+
+**Total lines added**: ~120 lines
+
+---
+
+## ⚠️ CRITICAL NOTES
+
+- **Table initialization MUST be after `.Build()`** to access `host.Services`
+- **If table creation fails, startup should fail** (see `throw` in catch)
+- **Logging will show**: "TrancoList table initialized successfully"
+- **First run will take 5-10 seconds longer** (creating tables)
+- **Subsequent runs will be instant** (tables already exist)
