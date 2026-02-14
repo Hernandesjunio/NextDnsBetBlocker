@@ -6,6 +6,8 @@ using NextDnsBetBlocker.Core.Models;
 /// <summary>
 /// Gerenciador de batches paralelos com INSTRUMENTAÇÃO
 /// Agrupa por partição, controla paralelismo e rastreia métricas
+/// Thread-safe: Usa ConcurrentQueue para Phase 2 (multi-threaded)
+/// Phase 1 (Enqueue) é single-threaded, sem lock necessário
 /// </summary>
 public class ParallelBatchManager : IDisposable
 {
@@ -14,11 +16,12 @@ public class ParallelBatchManager : IDisposable
     private readonly SemaphoreSlim _maxParallelismSemaphore;
     private readonly ConcurrentBag<Task> _activeTasks;
     private readonly ParallelBatchManagerMetrics _metrics;
+    private volatile int _totalBatchesProcessed;
 
     private class PartitionBatchQueue
     {
         public List<DomainListEntry> CurrentBatch { get; set; } = new();
-        public Queue<List<DomainListEntry>> PendingBatches { get; set; } = new();
+        public ConcurrentQueue<List<DomainListEntry>> PendingBatches { get; set; } = new();  // ✅ ConcurrentQueue (thread-safe)
         public int ItemCount { get; set; }
     }
 
@@ -33,8 +36,8 @@ public class ParallelBatchManager : IDisposable
 
     /// <summary>
     /// Enfileirar uma entrada (domínio)
-    /// Agrupa automaticamente por partição com rastreamento
-    /// Cria batch quando atinge 100 items (não MaxBatchesPerPartition * 100)
+    /// NOTA: Chamado apenas durante Phase 1 (single-threaded producer)
+    /// Sem lock necessário - sequencial
     /// </summary>
     public void Enqueue(DomainListEntry entry)
     {
@@ -43,33 +46,31 @@ public class ParallelBatchManager : IDisposable
 
         _metrics.RecordItemEnqueued(partitionKey);
 
-        lock (queue)
+        // ✅ SEM LOCK: Phase 1 é single-threaded (producer sequencial)
+        queue.CurrentBatch.Add(entry);
+        queue.ItemCount++;
+
+        // Se batch atingiu 100 items, mover para fila de pendentes
+        if (queue.CurrentBatch.Count >= 100)
         {
-            queue.CurrentBatch.Add(entry);
-            queue.ItemCount++;
+            queue.PendingBatches.Enqueue(new List<DomainListEntry>(queue.CurrentBatch));
+            _metrics.RecordBatchCreated(partitionKey, queue.PendingBatches.Count);
+            queue.CurrentBatch.Clear();
 
-            // Se batch atingiu 100 items (tamanho padrão), mover para fila de pendentes
-            // ✅ CORRIGIDO: Era MaxBatchesPerPartition * 100 (500 items!)
-            if (queue.CurrentBatch.Count >= 100)
+            // Registrar backpressure se fila está crescendo
+            if (queue.PendingBatches.Count >= 10)
             {
-                queue.PendingBatches.Enqueue(new List<DomainListEntry>(queue.CurrentBatch));
-                _metrics.RecordBatchCreated(partitionKey, queue.PendingBatches.Count);
-                queue.CurrentBatch.Clear();
-
-                // Registrar backpressure se fila está crescendo
-                if (queue.PendingBatches.Count >= 10)  // ← Threshold mais realista
-                {
-                    _metrics.RecordBackpressureEvent(partitionKey);
-                }
+                _metrics.RecordBackpressureEvent(partitionKey);
             }
-
-            // Atualizar profundidade de fila
-            _metrics.UpdateQueueDepth(partitionKey, queue.PendingBatches.Count);
         }
+
+        // Atualizar profundidade de fila
+        _metrics.UpdateQueueDepth(partitionKey, queue.PendingBatches.Count);
     }
 
     /// <summary>
     /// Flush: enviar todos os batches pendentes em paralelo
+    /// Phase 2 é multi-threaded, ConcurrentQueue é thread-safe
     /// </summary>
     public async Task FlushAsync(
         Func<List<DomainListEntry>, Task> sendBatchFunc,
@@ -79,19 +80,20 @@ public class ParallelBatchManager : IDisposable
         foreach (var kvp in _batchQueues)
         {
             var queue = kvp.Value;
-            lock (queue)
+
+            // ✅ SEM LOCK: CurrentBatch é per-partition, não compartilhado
+            if (queue.CurrentBatch.Count > 0)
             {
-                if (queue.CurrentBatch.Count > 0)
-                {
-                    queue.PendingBatches.Enqueue(new List<DomainListEntry>(queue.CurrentBatch));
-                    _metrics.RecordBatchCreated(kvp.Key, queue.PendingBatches.Count);
-                    queue.CurrentBatch.Clear();
-                }
+                queue.PendingBatches.Enqueue(new List<DomainListEntry>(queue.CurrentBatch));
+                _metrics.RecordBatchCreated(kvp.Key, queue.PendingBatches.Count);
+                queue.CurrentBatch.Clear();
             }
         }
 
         // Processar todos os batches em paralelo
         var tasks = new List<Task>();
+        var lastProgressReport = 0;
+        var progressStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         foreach (var kvp in _batchQueues)
         {
@@ -99,17 +101,9 @@ public class ParallelBatchManager : IDisposable
             var queue = kvp.Value;
 
             // Dequeue e processar batches desta partição
-            while (true)
+            // ✅ ConcurrentQueue é thread-safe, TryDequeue é atomico
+            while (queue.PendingBatches.TryDequeue(out var batch))
             {
-                List<DomainListEntry>? batch;
-                lock (queue)
-                {
-                    if (queue.PendingBatches.Count == 0)
-                        break;
-                    batch = queue.PendingBatches.Dequeue();
-                    _metrics.UpdateQueueDepth(partitionKey, queue.PendingBatches.Count);
-                }
-
                 if (batch == null || batch.Count == 0)
                     continue;
 
@@ -117,14 +111,37 @@ public class ParallelBatchManager : IDisposable
                 await _maxParallelismSemaphore.WaitAsync(cancellationToken);
 
                 // Criar task para este batch
-                var task = ProcessBatchAsync(batch, sendBatchFunc, cancellationToken);
+                var task = ProcessBatchAsync(batch, partitionKey, sendBatchFunc, cancellationToken);
                 tasks.Add(task);
                 _activeTasks.Add(task);
+
+                // Log progresso de forma eficiente (a cada N batches)
+                _totalBatchesProcessed++;
+                if (_totalBatchesProcessed % 500 == 0)  // A cada 500 batches = ~50k items
+                {
+                    var percentComplete = (_totalBatchesProcessed * 100) / GetTotalBatches();
+                    var itemsProcessed = _totalBatchesProcessed * 100;  // ~100 items/batch
+                    var elapsed = progressStopwatch.ElapsedMilliseconds;
+                    var throughput = elapsed > 0 ? (itemsProcessed / (elapsed / 1000.0)) : 0;
+
+                    // Log apenas a cada segundo
+                    if (elapsed - lastProgressReport > 1000)
+                    {
+                        lastProgressReport = (int)elapsed;
+                        // Logging será feito no ListImportConsumer via PerformanceMonitor
+                    }
+                }
             }
         }
 
         // Aguardar todas as tasks
         await Task.WhenAll(tasks);
+        progressStopwatch.Stop();
+    }
+
+    private int GetTotalBatches()
+    {
+        return _batchQueues.Values.Sum(q => q.ItemCount / 100 + (q.ItemCount % 100 > 0 ? 1 : 0));
     }
 
     /// <summary>
@@ -132,18 +149,29 @@ public class ParallelBatchManager : IDisposable
     /// </summary>
     private async Task ProcessBatchAsync(
         List<DomainListEntry> batch,
+        string partitionKey,
         Func<List<DomainListEntry>, Task> sendBatchFunc,
         CancellationToken cancellationToken)
     {
         try
         {
             await sendBatchFunc(batch);
+            _metrics.UpdateQueueDepth(partitionKey, GetQueueDepth(partitionKey));
         }
         finally
         {
             // Liberar semáforo para próxima task
             _maxParallelismSemaphore.Release();
         }
+    }
+
+    private int GetQueueDepth(string partitionKey)
+    {
+        if (_batchQueues.TryGetValue(partitionKey, out var queue))
+        {
+            return queue.PendingBatches.Count;
+        }
+        return 0;
     }
 
     /// <summary>
@@ -156,6 +184,7 @@ public class ParallelBatchManager : IDisposable
 
     /// <summary>
     /// Obter número de batches pendentes por partição
+    /// ✅ ConcurrentQueue tem Count thread-safe
     /// </summary>
     public Dictionary<string, int> GetPendingBatchCounts()
     {
@@ -163,10 +192,8 @@ public class ParallelBatchManager : IDisposable
 
         foreach (var kvp in _batchQueues)
         {
-            lock (kvp.Value)
-            {
-                counts[kvp.Key] = kvp.Value.PendingBatches.Count;
-            }
+            // ✅ SEM LOCK: ConcurrentQueue.Count é thread-safe
+            counts[kvp.Key] = kvp.Value.PendingBatches.Count;
         }
 
         return counts;

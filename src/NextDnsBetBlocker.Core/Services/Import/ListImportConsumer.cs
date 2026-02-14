@@ -94,11 +94,10 @@ public class ListImportConsumer : IListImportConsumer
                     itemCount++;
                     performanceMonitor.IncrementProcessed(1);
 
-                    // Report progress periodicamente (a cada 1%)
+                    // Report progress periodicamente
                     if (itemCount % Math.Max(1000, itemCount / 100) == 0)
                     {
                         var progressStats = performanceMonitor.GetStats();
-                        performanceLogger.LogProgressPercentile(progressStats, percentileInterval: 1);
                         performanceLogger.LogProgress(progressStats, intervalMs: 5000);
                     }
                 }
