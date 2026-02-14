@@ -64,6 +64,7 @@ public class ListImportConsumer : IListImportConsumer
 
             // Criar gerenciador paralelo e monitor de performance
             var batchManager = new ParallelBatchManager(_parallelConfig);
+            var batchManagerMetrics = batchManager.GetMetrics();
             var performanceMonitor = new PerformanceMonitor(config.MaxPartitions * 1_000_000);  // Estimativa
             var performanceLogger = new PerformanceLogger(_logger, config.ListName);
             var progressStopwatch = Stopwatch.StartNew();
@@ -106,6 +107,29 @@ public class ListImportConsumer : IListImportConsumer
                     "Phase 1 completed. Queued {Count:N0} items. Starting Phase 2: Parallel flush...",
                     itemCount);
 
+                // Log distribuição de items por partição
+                var itemsDistribution = batchManagerMetrics.GetItemsDistribution();
+                performanceLogger.LogLoadDistribution(itemsDistribution);
+
+                // Verificar desbalanceamento
+                if (batchManagerMetrics.HasLoadImbalance(out var percentages))
+                {
+                    _logger.LogWarning(
+                        "[{ListName}] ⚠ Load imbalance detected: {PartitionDistribution}",
+                        config.ListName,
+                        string.Join(" | ", percentages.Select(kvp => $"{kvp.Key}: {kvp.Value:F1}%")));
+                }
+
+                // Log estatísticas de enfileiramento
+                var (totalEnqueued, totalBatches, maxQueueDepth, backpressureEvents) = batchManagerMetrics.GetTotalMetrics();
+                _logger.LogInformation(
+                    "[{ListName}] Enqueueing stats: {Total} items → {Batches} batches | Max queue depth: {MaxDepth} | Backpressure events: {Events}",
+                    config.ListName,
+                    totalEnqueued,
+                    totalBatches,
+                    maxQueueDepth,
+                    backpressureEvents);
+
                 performanceMonitor = new PerformanceMonitor(itemCount);  // Reset com contagem real
 
                 // Fase 2: Flush paralelo
@@ -120,6 +144,26 @@ public class ListImportConsumer : IListImportConsumer
 
                 // Log resumo final
                 performanceLogger.LogCompletionSummary(stats);
+
+                // Log estatísticas finais de flushing
+                var flushMetrics = batchManagerMetrics.GetPartitionMetrics();
+                if (flushMetrics.Count > 0)
+                {
+                    _logger.LogInformation("[{ListName}] Flush Statistics:", config.ListName);
+                    foreach (var partition in flushMetrics.OrderBy(x => x.Key))
+                    {
+                        _logger.LogInformation(
+                            "[{ListName}]   Partition {Key}: {Batches} batches processed | Backpressure hits: {BP}",
+                            config.ListName,
+                            partition.Key,
+                            partition.Value.BatchesCreated,
+                            partition.Value.BackpressureCount);
+                    }
+                }
+
+                // Log distribuição final
+                var finalDistribution = batchManagerMetrics.GetItemsDistribution();
+                performanceLogger.LogLoadDistribution(finalDistribution);
 
                 // Log métricas por partição
                 if (_partitionRateLimiter != null)

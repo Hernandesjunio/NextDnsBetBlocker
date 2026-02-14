@@ -4,16 +4,16 @@ using System.Collections.Concurrent;
 using NextDnsBetBlocker.Core.Models;
 
 /// <summary>
-/// Gerenciador de batches paralelos
-/// Agrupa por partição e controla grau de paralelismo
-/// Implementa backpressure automática
+/// Gerenciador de batches paralelos com INSTRUMENTAÇÃO
+/// Agrupa por partição, controla paralelismo e rastreia métricas
 /// </summary>
-public class ParallelBatchManager
+public class ParallelBatchManager : IDisposable
 {
     private readonly ParallelImportConfig _config;
     private readonly ConcurrentDictionary<string, PartitionBatchQueue> _batchQueues;
     private readonly SemaphoreSlim _maxParallelismSemaphore;
     private readonly ConcurrentBag<Task> _activeTasks;
+    private readonly ParallelBatchManagerMetrics _metrics;
 
     private class PartitionBatchQueue
     {
@@ -28,16 +28,19 @@ public class ParallelBatchManager
         _batchQueues = new ConcurrentDictionary<string, PartitionBatchQueue>();
         _maxParallelismSemaphore = new SemaphoreSlim(_config.MaxDegreeOfParallelism, _config.MaxDegreeOfParallelism);
         _activeTasks = new ConcurrentBag<Task>();
+        _metrics = new ParallelBatchManagerMetrics();
     }
 
     /// <summary>
     /// Enfileirar uma entrada (domínio)
-    /// Agrupa automaticamente por partição
+    /// Agrupa automaticamente por partição com rastreamento
     /// </summary>
     public void Enqueue(DomainListEntry entry)
     {
         var partitionKey = entry.PartitionKey;
         var queue = _batchQueues.GetOrAdd(partitionKey, _ => new PartitionBatchQueue());
+
+        _metrics.RecordItemEnqueued(partitionKey);
 
         lock (queue)
         {
@@ -48,8 +51,18 @@ public class ParallelBatchManager
             if (queue.CurrentBatch.Count >= _config.MaxBatchesPerPartition * 100)
             {
                 queue.PendingBatches.Enqueue(new List<DomainListEntry>(queue.CurrentBatch));
+                _metrics.RecordBatchCreated(partitionKey, queue.PendingBatches.Count);
                 queue.CurrentBatch.Clear();
+
+                // Registrar backpressure se fila está crescendo
+                if (queue.PendingBatches.Count >= _config.MaxBatchesPerPartition * 0.8)
+                {
+                    _metrics.RecordBackpressureEvent(partitionKey);
+                }
             }
+
+            // Atualizar profundidade de fila
+            _metrics.UpdateQueueDepth(partitionKey, queue.PendingBatches.Count);
         }
     }
 
@@ -69,6 +82,7 @@ public class ParallelBatchManager
                 if (queue.CurrentBatch.Count > 0)
                 {
                     queue.PendingBatches.Enqueue(new List<DomainListEntry>(queue.CurrentBatch));
+                    _metrics.RecordBatchCreated(kvp.Key, queue.PendingBatches.Count);
                     queue.CurrentBatch.Clear();
                 }
             }
@@ -91,6 +105,7 @@ public class ParallelBatchManager
                     if (queue.PendingBatches.Count == 0)
                         break;
                     batch = queue.PendingBatches.Dequeue();
+                    _metrics.UpdateQueueDepth(partitionKey, queue.PendingBatches.Count);
                 }
 
                 if (batch == null || batch.Count == 0)
@@ -161,6 +176,14 @@ public class ParallelBatchManager
     public int GetTotalQueuedItems()
     {
         return _batchQueues.Values.Sum(q => q.ItemCount);
+    }
+
+    /// <summary>
+    /// Obter métricas do gerenciador
+    /// </summary>
+    public ParallelBatchManagerMetrics GetMetrics()
+    {
+        return _metrics;
     }
 
     public void Dispose()
