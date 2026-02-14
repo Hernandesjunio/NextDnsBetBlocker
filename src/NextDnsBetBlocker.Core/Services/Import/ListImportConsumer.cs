@@ -51,6 +51,9 @@ public class ListImportConsumer : IListImportConsumer
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken)
     {
+        var overallStopwatch = Stopwatch.StartNew();
+        int itemCount = 0;
+
         try
         {
             _logger.LogInformation(
@@ -71,7 +74,7 @@ public class ListImportConsumer : IListImportConsumer
             var performanceMonitor = new PerformanceMonitor(config.MaxPartitions * 1_000_000);
             var performanceLogger = new PerformanceLogger(_logger, config.ListName);
             var progressStopwatch = Stopwatch.StartNew();
-            int itemCount = 0;
+            itemCount = 0;
 
             try
             {
@@ -241,14 +244,38 @@ public class ListImportConsumer : IListImportConsumer
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Consumer cancelled for {ListName}", config.ListName);
+            overallStopwatch.Stop();
+            _logger.LogInformation(
+                "Consumer cancelled for {ListName} | Time: {Time} | Processed: {Count:N0} items | Throughput: {Throughput:F0} ops/s",
+                config.ListName,
+                FormatTimeSpan(overallStopwatch.Elapsed),
+                itemCount,
+                itemCount > 0 ? itemCount / overallStopwatch.Elapsed.TotalSeconds : 0);
             throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Consumer failed for {ListName}", config.ListName);
+            overallStopwatch.Stop();
+            _logger.LogError(
+                ex,
+                "❌ Consumer FAILED for {ListName} | Time: {Time} | Processed: {Count:N0} items | Throughput: {Throughput:F0} ops/s | Error: {Error}",
+                config.ListName,
+                FormatTimeSpan(overallStopwatch.Elapsed),
+                itemCount,
+                itemCount > 0 ? itemCount / overallStopwatch.Elapsed.TotalSeconds : 0,
+                ex.Message);
             throw;
         }
+    }
+
+    private string FormatTimeSpan(TimeSpan ts)
+    {
+        if (ts.TotalHours >= 1)
+            return $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+        else if (ts.TotalMinutes >= 1)
+            return $"{ts.Minutes:D2}:{ts.Seconds:D2}";
+        else
+            return $"{ts.Seconds}s";
     }
 
     private async Task SendBatchAsync(
