@@ -57,9 +57,11 @@ public class TrancoListImporter
     }
 
     /// <summary>
-    /// Factory method para criar config (compatibilidade)
-    /// Nota: Preferir injetar TrancoListImporter ao invés de usar este método
+    /// Factory method para criar config (OBSOLETO)
+    /// Use IOptions<ListImportConfig> injetado via DI ao invés disso
+    /// Mantido apenas para compatibilidade retroativa
     /// </summary>
+    [Obsolete("Use IOptions<ListImportConfig> dependency injection instead")]
     public static ListImportConfig CreateConfig(
         string? sourceUrl = null,
         int? batchSize = null,
