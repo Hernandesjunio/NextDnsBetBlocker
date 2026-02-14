@@ -57,10 +57,11 @@ public class ListTableStorageRepository : IListTableStorageRepository
             // Validar limite do Table Storage
             if (entries.Count > MaxBatchSize)
             {
-                _logger.LogWarning(
-                    "Batch size {Count} exceeds max {Max}. Will split into multiple batches.",
+                _logger.LogDebug(
+                    "Batch size {Count} exceeds max {Max}. Will split into {ChunkCount} batches.",
                     entries.Count,
-                    MaxBatchSize);
+                    MaxBatchSize,
+                    (entries.Count / MaxBatchSize) + (entries.Count % MaxBatchSize > 0 ? 1 : 0));
 
                 // Processar em chunks
                 var chunks = entries
