@@ -2,13 +2,22 @@ namespace NextDnsBetBlocker.Core.Services;
 
 using Azure.Storage.Blobs;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
 
+/// <summary>
+/// HaGeZi Gambling Domains Provider
+/// URLs configuráveis via IOptions<HageziProviderConfig>
+/// Cache de 1 hora para melhor performance
+/// </summary>
 public class HageziProvider : IHageziProvider
 {
     private readonly BlobContainerClient _containerClient;
     private readonly ILogger<HageziProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string _adblockUrl;
+    private readonly string _wildcardUrl;
+    private readonly int _cacheExpireHours;
     private HashSet<string> _gamblingDomains = [];
     private DateTime _lastUpdate = DateTime.MinValue;
 
@@ -16,25 +25,40 @@ public class HageziProvider : IHageziProvider
     private const string BlobNameAdblock = "hagezi-gambling-adblock.txt";
     private const string BlobNameWildcard = "hagezi-gambling-wildcard.txt";
 
-    // HaGeZi URLs - Full versions (189.650 domains base + wildcards for subdomains)
-    private const string HageziUrlAdblock = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/gambling.txt";
-    private const string HageziUrlWildcard = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling.txt";
-
     public HageziProvider(
         BlobContainerClient containerClient,
         IHttpClientFactory httpClientFactory,
-        ILogger<HageziProvider> logger)
+        ILogger<HageziProvider> logger,
+        IOptions<HageziProviderConfig> options)  // ← IOptions injetado
     {
         _containerClient = containerClient;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        
+        var config = options.Value;
+        _adblockUrl = config.AdblockUrl;
+        _wildcardUrl = config.WildcardUrl;
+        _cacheExpireHours = config.CacheExpireHours;
+
+        if (string.IsNullOrEmpty(_adblockUrl) || string.IsNullOrEmpty(_wildcardUrl))
+        {
+            throw new InvalidOperationException(
+                "HaGeZi:AdblockUrl and HaGeZi:WildcardUrl must be configured in appsettings or User Secrets");
+        }
+
+        _logger.LogInformation(
+            "HageziProvider initialized with AdblockUrl: {AdblockUrl}, WildcardUrl: {WildcardUrl}, CacheExpire: {Hours}h",
+            _adblockUrl,
+            _wildcardUrl,
+            _cacheExpireHours);
     }
 
     public async Task<HashSet<string>> GetGamblingDomainsAsync()
     {
-        // If cache is fresh (less than 1 hour old), return it
-        if (_gamblingDomains.Count > 0 && DateTime.UtcNow - _lastUpdate < TimeSpan.FromHours(1))
+        // If cache is fresh, return it
+        if (_gamblingDomains.Count > 0 && DateTime.UtcNow - _lastUpdate < TimeSpan.FromHours(_cacheExpireHours))
         {
+            _logger.LogDebug("Returning cached HaGeZi gambling domains: {Count} domains", _gamblingDomains.Count);
             return _gamblingDomains;
         }
 
@@ -56,11 +80,11 @@ public class HageziProvider : IHageziProvider
             var httpClient = _httpClientFactory.CreateClient();
 
             // Download both formats for maximum coverage
-            _logger.LogInformation("Downloading adblock format from {Url}", HageziUrlAdblock);
-            var adblockContent = await httpClient.GetStringAsync(HageziUrlAdblock);
+            _logger.LogInformation("Downloading adblock format from {Url}", _adblockUrl);
+            var adblockContent = await httpClient.GetStringAsync(_adblockUrl);
 
-            _logger.LogInformation("Downloading wildcard format from {Url}", HageziUrlWildcard);
-            var wildcardContent = await httpClient.GetStringAsync(HageziUrlWildcard);
+            _logger.LogInformation("Downloading wildcard format from {Url}", _wildcardUrl);
+            var wildcardContent = await httpClient.GetStringAsync(_wildcardUrl);
 
             // Parse both formats and merge
             var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -77,7 +101,7 @@ public class HageziProvider : IHageziProvider
             _logger.LogInformation("Parsed {WildcardCount} domains from wildcard format", wildcardDomains.Count);
             _logger.LogInformation("Total unique gambling domains after merge: {TotalCount}", domains.Count);
 
-            // Save to blob storage only
+            // Save to blob storage
             try
             {
                 var blobClientAdblock = _containerClient.GetBlobClient(BlobNameAdblock);
@@ -118,122 +142,110 @@ public class HageziProvider : IHageziProvider
             try
             {
                 var blobClientAdblock = _containerClient.GetBlobClient(BlobNameAdblock);
-                var downloadAdblock = await blobClientAdblock.DownloadAsync();
-                using var srAdblock = new StreamReader(downloadAdblock.Value.Content);
-                var contentAdblock = await srAdblock.ReadToEndAsync();
-                var adblockDomains = ParseAdblockFormat(contentAdblock);
-                foreach (var domain in adblockDomains)
-                    domains.Add(domain);
-                _logger.LogInformation("Loaded {Count} domains from blob storage (adblock format)", adblockDomains.Count);
+                if (await blobClientAdblock.ExistsAsync())
+                {
+                    var download = await blobClientAdblock.DownloadAsync();
+                    using var sr = new StreamReader(download.Value.Content);
+                    var content = await sr.ReadToEndAsync();
+                    var adblockDomains = ParseAdblockFormat(content);
+                    foreach (var domain in adblockDomains)
+                        domains.Add(domain);
+                    _logger.LogInformation("Loaded {Count} domains from adblock blob", adblockDomains.Count);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to load adblock format from blob storage");
+                _logger.LogWarning(ex, "Failed to load adblock format from blob");
             }
 
             // Load wildcard format
             try
             {
                 var blobClientWildcard = _containerClient.GetBlobClient(BlobNameWildcard);
-                var downloadWildcard = await blobClientWildcard.DownloadAsync();
-                using var srWildcard = new StreamReader(downloadWildcard.Value.Content);
-                var contentWildcard = await srWildcard.ReadToEndAsync();
-                var wildcardDomains = ParseWildcardFormat(contentWildcard);
-                foreach (var domain in wildcardDomains)
-                    domains.Add(domain);
-                _logger.LogInformation("Loaded {Count} domains from blob storage (wildcard format)", wildcardDomains.Count);
+                if (await blobClientWildcard.ExistsAsync())
+                {
+                    var download = await blobClientWildcard.DownloadAsync();
+                    using var sr = new StreamReader(download.Value.Content);
+                    var content = await sr.ReadToEndAsync();
+                    var wildcardDomains = ParseWildcardFormat(content);
+                    foreach (var domain in wildcardDomains)
+                        domains.Add(domain);
+                    _logger.LogInformation("Loaded {Count} domains from wildcard blob", wildcardDomains.Count);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to load wildcard format from blob storage");
+                _logger.LogWarning(ex, "Failed to load wildcard format from blob");
             }
 
             if (domains.Count > 0)
             {
                 _gamblingDomains = domains;
                 _lastUpdate = DateTime.UtcNow;
-                _logger.LogInformation("Loaded HaGeZi gambling list from blob storage: {Count} total domains", domains.Count);
-                return;
+                _logger.LogInformation("Loaded HaGeZi gambling domains from blob storage: {Count} total domains", domains.Count);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load from blob storage");
+            _logger.LogError(ex, "Failed to load HaGeZi gambling domains from blob storage");
         }
-
-        _logger.LogWarning("Could not load HaGeZi list from blob storage, using empty set");
-        _gamblingDomains = [];
     }
 
-    private static HashSet<string> ParseAdblockFormat(string content)
+    private HashSet<string> ParseAdblockFormat(string content)
     {
         var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var line in content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in content.Split('\n'))
         {
-            var trimmed = line.AsSpan().Trim();
+            var trimmed = line.Trim();
 
             // Skip comments and empty lines
-            if (trimmed.IsEmpty || trimmed[0] == '[' || trimmed[0] == '!')
+            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("!"))
                 continue;
 
-            // Extract domain from adblock format (e.g., "||example.com^" becomes "example.com")
-            var domain = trimmed;
-
-            // Remove || prefix
-            if (domain.StartsWith("||"))
-                domain = domain[2..];
-
-            // Remove ^ suffix
-            if (domain.EndsWith("^"))
-                domain = domain[..^1];
-
-            domain = domain.Trim();
-
-            if (!domain.IsEmpty && domain.Contains('.'))
+            // Adblock format: || example.com^
+            if (trimmed.StartsWith("||") && trimmed.EndsWith("^"))
             {
-                domains.Add(domain.ToString().ToLowerInvariant());
+                var domain = trimmed[2..^1].Trim();
+                if (!string.IsNullOrWhiteSpace(domain))
+                    domains.Add(domain);
             }
         }
 
         return domains;
     }
 
-    private static HashSet<string> ParseWildcardFormat(string content)
+    private HashSet<string> ParseWildcardFormat(string content)
     {
         var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var line in content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in content.Split('\n'))
         {
-            var trimmed = line.AsSpan().Trim();
+            var trimmed = line.Trim();
 
             // Skip comments and empty lines
-            if (trimmed.IsEmpty || trimmed[0] == '[' || trimmed[0] == '!')
+            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("#"))
                 continue;
 
-            // Extract domain from wildcard format (e.g., "*.example.com" becomes "example.com")
-            var domain = trimmed;
+            // Remove wildcard prefix if present
+            if (trimmed.StartsWith("*."))
+                trimmed = trimmed[2..];
 
-            // Remove *. prefix
-            if (domain.StartsWith("*."))
-                domain = domain[2..];
-
-            // Remove || prefix (in case format varies)
-            if (domain.StartsWith("||"))
-                domain = domain[2..];
-
-            // Remove ^ suffix
-            if (domain.EndsWith("^"))
-                domain = domain[..^1];
-
-            domain = domain.Trim();
-
-            if (!domain.IsEmpty && domain.Contains('.'))
-            {
-                domains.Add(domain.ToString().ToLowerInvariant());
-            }
+            if (!string.IsNullOrWhiteSpace(trimmed))
+                domains.Add(trimmed);
         }
 
         return domains;
     }
+}
+
+/// <summary>
+/// Configuração para HageziProvider
+/// URLs lidas de appsettings.json ou User Secrets
+/// </summary>
+public class HageziProviderConfig
+{
+    public string AdblockUrl { get; set; } = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/gambling.txt";
+    public string WildcardUrl { get; set; } = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling.txt";
+    public int CacheExpireHours { get; set; } = 1;
 }

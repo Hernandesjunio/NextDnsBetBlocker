@@ -6,6 +6,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 using NextDnsBetBlocker.Core.Services;
@@ -180,6 +181,16 @@ public static class CoreServiceCollectionExtensions
                 client.Timeout = TimeSpan.FromSeconds(30);
             });
 
+        // ============= NEXTDNS CLIENT CONFIG (with IOptions) =============
+        services.AddOptions<NextDnsClientConfig>()
+            .Bind(configuration.GetSection("NextDns"))
+            .ValidateOnStart();
+
+        // ============= HAGEZI PROVIDER CONFIG (with IOptions) =============
+        services.AddOptions<HageziProviderConfig>()
+            .Bind(configuration.GetSection("HaGeZi"))
+            .ValidateOnStart();
+
         // ============= AZURE STORAGE - TABLE CLIENTS =============
         if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
         {
@@ -232,7 +243,8 @@ public static class CoreServiceCollectionExtensions
                 new HageziProvider(
                     containerClient,
                     sp.GetRequiredService<IHttpClientFactory>(),
-                    sp.GetRequiredService<ILogger<HageziProvider>>()));
+                    sp.GetRequiredService<ILogger<HageziProvider>>(),
+                    sp.GetRequiredService<IOptions<HageziProviderConfig>>()));  // ← Injetar IOptions
         }
 
         // ============= ALLOWLIST PROVIDER =============
