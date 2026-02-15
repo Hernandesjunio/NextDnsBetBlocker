@@ -12,17 +12,17 @@ using NextDnsBetBlocker.Core.Models;
 public class ImportListPipeline
 {
     private readonly ILogger<ImportListPipeline> _logger;
-    private readonly IListImporterFactory _importerFactory;
     private readonly IEnumerable<ListImportConfig> _configs;
+    private readonly IListImporter listImporter;
 
     public ImportListPipeline(
         ILogger<ImportListPipeline> logger,
-        IListImporterFactory importerFactory,
-        IEnumerable<ListImportConfig> configs)
+        IEnumerable<ListImportConfig> configs,
+        IListImporter listImporter)
     {
         _logger = logger;
-        _importerFactory = importerFactory;
         _configs = configs;
+        this.listImporter = listImporter;
     }
 
     /// <summary>
@@ -115,14 +115,7 @@ public class ImportListPipeline
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
-        {
-            // Obter importer específico
-            var importer = _importerFactory.CreateImporter(config.ListName);
-            if (importer == null)
-            {
-                throw new InvalidOperationException($"No importer found for list {config.ListName}");
-            }
-
+        {            
             // Atualizar checkpoint após sucesso
             // (Apenas logging, checkpoint é feito no Table Storage pelos importers)
             var now = DateTime.UtcNow;
@@ -133,7 +126,7 @@ public class ImportListPipeline
 
             // Decidir: full import ou diff (por simplicidade, sempre full por enquanto)
             _logger.LogInformation("Performing FULL import for {ListName}", config.ListName);
-            result.Metrics = await importer.ImportAsync(config, null, cancellationToken);
+            result.Metrics = await listImporter.ImportAsync(config, null, cancellationToken);
             result.ImportType = "Full";
 
             result.Success = true;
