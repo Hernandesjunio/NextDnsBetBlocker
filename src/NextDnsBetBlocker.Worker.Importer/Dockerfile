@@ -3,7 +3,11 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 
 WORKDIR /src
 
-# Copy solution and project files
+# Copy solution files
+COPY ["Directory.Build.props", "."]
+COPY ["./.editorconfig", "."]
+
+# Copy project files
 COPY ["src/NextDnsBetBlocker.Worker.Importer/NextDnsBetBlocker.Worker.Importer.csproj", "NextDnsBetBlocker.Worker.Importer/"]
 COPY ["src/NextDnsBetBlocker.Core/NextDnsBetBlocker.Core.csproj", "NextDnsBetBlocker.Core/"]
 
@@ -28,11 +32,12 @@ WORKDIR /app
 # Copy published app from builder
 COPY --from=builder /app/publish .
 
-# Create config directory
-RUN mkdir -p /app/config
-
-# Copy appsettings (will be overridden at runtime via volume or env)
+# Copy appsettings
 COPY ["src/NextDnsBetBlocker.Worker.Importer/appsettings.json", "./"]
+
+# Health check (optional)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=1 \
+  CMD dotnet --version || exit 1
 
 # Run the application
 ENTRYPOINT ["dotnet", "NextDnsBetBlocker.Worker.Importer.dll"]
