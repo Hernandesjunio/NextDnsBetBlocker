@@ -3,11 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 
 WORKDIR /src
 
-# Copy solution files
-COPY ["Directory.Build.props", "."]
-COPY ["./.editorconfig", "."]
-
-# Copy project files
+# Copy project files only (no need for optional files)
 COPY ["src/NextDnsBetBlocker.Worker.Importer/NextDnsBetBlocker.Worker.Importer.csproj", "NextDnsBetBlocker.Worker.Importer/"]
 COPY ["src/NextDnsBetBlocker.Core/NextDnsBetBlocker.Core.csproj", "NextDnsBetBlocker.Core/"]
 
