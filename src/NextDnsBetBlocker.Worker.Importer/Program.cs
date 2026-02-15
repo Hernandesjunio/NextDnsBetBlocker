@@ -48,7 +48,6 @@ services.AddSingleton(config);
 services.AddCoreServices(config, ServiceLayerType.Importer);
 
 // ============= PIPELINE & FACTORY =============
-services.AddSingleton<IListImporterFactory, ListImporterFactory>();
 services.AddSingleton<ImportListPipeline>();
 
 // ============= BUILD SERVICE PROVIDER =============
