@@ -103,6 +103,41 @@ public static class CoreServiceCollectionExtensions
         // ============= HTTP CLIENT =============
         services.AddHttpClient<IListImportProducer, ListImportProducer>();
 
+        // ============= LIST IMPORT CONFIGS =============
+        // Register all ListImportConfig instances from appsettings
+        services.AddSingleton<IEnumerable<ListImportConfig>>(sp =>
+        {
+            var configs = new List<ListImportConfig>();
+
+            var trancoConfig = configuration.GetSection("ListImport:TrancoList").Get<ListImportConfig>();
+            if (trancoConfig != null)
+            {
+                configs.Add(trancoConfig);
+            }
+
+            var hageziConfig = configuration.GetSection("ListImport:Hagezi").Get<ListImportConfig>();
+            if (hageziConfig != null)
+            {
+                configs.Add(hageziConfig);
+            }
+
+            return configs;
+        });
+
+        // ============= CHECKPOINT STORE =============
+        if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
+        {
+            services.AddSingleton<ICheckpointStore>(sp =>
+            {
+                var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
+                var tableClient = tableServiceClient.GetTableClient("ImportCheckpoint");
+                tableClient.CreateIfNotExists();
+                return new CheckpointStore(
+                    tableClient,
+                    sp.GetRequiredService<ILogger<CheckpointStore>>());
+            });
+        }
+
         // ============= PARALLEL IMPORT CONFIG =============
         services.AddOptions<ParallelImportConfig>()
             .Bind(configuration.GetSection("ParallelImport"))
@@ -159,6 +194,62 @@ public static class CoreServiceCollectionExtensions
                 sp.GetRequiredService<IListTableStorageRepository>());
         });
 
+        // ============= PARALLEL IMPORT CONFIG =============
+        services.AddOptions<ParallelImportConfig>()
+            .Bind(configuration.GetSection("ParallelImport"))
+            .ValidateOnStart();
+
+        services.AddSingleton<ParallelImportConfig>(sp =>
+            sp.GetRequiredService<IOptionsSnapshot<ParallelImportConfig>>().Value);
+
+        // ============= IMPORT CONSUMER & ORCHESTRATOR =============
+        services.AddSingleton<IListImportConsumer, ListImportConsumer>();
+        services.AddSingleton<IListImportOrchestrator, ListImportOrchestrator>();
+
+        // ============= STORAGE REPOSITORIES =============
+        services.AddSingleton<IListTableStorageRepository>(sp =>
+        {
+            var connString = settings.AzureStorageConnectionString;
+            return new ListTableStorageRepository(
+                connString,
+                "TrancoList",
+                sp.GetRequiredService<ILogger<ListTableStorageRepository>>());
+        });
+
+        services.AddSingleton<IListBlobRepository>(sp =>
+        {
+            var connString = settings.AzureStorageConnectionString;
+            return new ListBlobRepository(
+                connString,
+                "tranco-lists",
+                sp.GetRequiredService<ILogger<ListBlobRepository>>());
+        });
+
+        // ============= LIST TABLE PROVIDER (with cache) =============
+        services.AddSingleton<IListTableProvider>(sp =>
+        {
+            var connString = settings.AzureStorageConnectionString;
+            var tableServiceClient = new TableServiceClient(connString);
+            var tableClient = tableServiceClient.GetTableClient("TrancoList");
+            var cache = sp.GetRequiredService<IMemoryCache>();
+            var partitionStrategy = sp.GetRequiredService<IPartitionKeyStrategy>();
+            return new ListTableProvider(
+                tableClient,
+                cache,
+                partitionStrategy,
+                sp.GetRequiredService<ILogger<ListTableProvider>>());
+        });
+
+        // ============= GENERIC LIST IMPORTER =============
+        services.AddSingleton<GenericListImporter>(sp =>
+        {
+            return new GenericListImporter(
+                sp.GetRequiredService<ILogger<GenericListImporter>>(),
+                sp.GetRequiredService<IListImportOrchestrator>(),
+                sp.GetRequiredService<IListBlobRepository>(),
+                sp.GetRequiredService<IListTableStorageRepository>());
+        });
+
         // ============= TRANCO LIST IMPORTER (with IOptions) =============
         services.AddOptions<ListImportConfig>()
             .Bind(configuration.GetSection("ListImport:TrancoList"))
@@ -195,9 +286,6 @@ public static class CoreServiceCollectionExtensions
 
         // ============= TRANCO ALLOW LIST PROVIDER =============
         services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();
-
-        // ============= IMPORT BACKGROUND SERVICE =============
-        services.AddHostedService<ImportListBackgroundService>();
     }
 
     /// <summary>

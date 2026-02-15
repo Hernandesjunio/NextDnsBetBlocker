@@ -1,79 +1,88 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NextDnsBetBlocker.Core.DependencyInjection;
-using NextDnsBetBlocker.Core.Interfaces;
+using NextDnsBetBlocker.Core.Services.Import;
 
 /// <summary>
 /// NextDnsBetBlocker.Worker.Importer
 /// 
-/// Runs on LOCAL MACHINE (bare metal)
-/// Responsible for:
-/// - Initial import of 5M Tranco domains
-/// - Periodic diff imports (weekly)
+/// Console App que roda APENAS UMA VEZ (via ACI)
+/// Executa importação sequencial: Hagezi → Tranco → Encerra
 /// 
-/// Does NOT run analysis or blocking (cloud-only)
+/// Frequency: 1x/semana (domingo 00:00)
+/// Orquestração: Azure Scheduler → ACI
+/// Duration: ~15 min
+/// Custo: ~R$ 1.20/mês
 /// 
-/// DI Registration: Centralized in Core.DependencyInjection.CoreServiceCollectionExtensions
+/// DI Registration: Centralizado em CoreServiceCollectionExtensions
 /// </summary>
-public static class Program
+
+var config = new ConfigurationBuilder()
+    .SetBasePath(Directory.GetCurrentDirectory())
+    .AddJsonFile("appsettings.json", optional: false)
+    .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development"}.json", optional: true)
+    .AddEnvironmentVariables()
+    .Build();
+
+var services = new ServiceCollection();
+
+// ============= LOGGING SETUP =============
+services.AddLogging(logging =>
 {
-    public static async Task Main(string[] args)
+    logging.ClearProviders();
+    logging.AddConsole();
+    logging.AddDebug();
+
+    var logLevel = config.GetSection("Logging:LogLevel:Default").Value ?? "Information";
+    if (Enum.TryParse<LogLevel>(logLevel, out var level))
     {
-        var config = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development"}.json", optional: true)
-            .AddEnvironmentVariables()
-            .Build();
-
-        var host = new HostBuilder()
-            .ConfigureAppConfiguration((context, configBuilder) =>
-            {
-                configBuilder.AddConfiguration(config);
-            })
-            .ConfigureServices((context, services) =>
-            {
-                // ============= CENTRALIZED CORE DI =============
-                // All dependency injection is now in CoreServiceCollectionExtensions
-                services.AddCoreServices(context.Configuration, ServiceLayerType.Importer);
-            })
-            .ConfigureLogging((context, logging) =>
-            {
-                logging.ClearProviders();
-                logging.AddConsole();
-                logging.AddDebug();
-
-                var logLevel = context.Configuration.GetSection("Logging:LogLevel:Default").Value ?? "Information";
-                if (Enum.TryParse<LogLevel>(logLevel, out var level))
-                {
-                    logging.SetMinimumLevel(level);
-                }
-            })
-            .Build();
-
-        // ============= INITIALIZE STORAGE INFRASTRUCTURE =============
-        try
-        {
-            var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
-            var logger = loggerFactory.CreateLogger("Program");
-            logger.LogInformation("Initializing storage infrastructure for Importer...");
-
-            var storageInit = host.Services.GetRequiredService<IStorageInfrastructureInitializer>();
-            await storageInit.InitializeAsync();
-
-            logger.LogInformation("Storage infrastructure initialized successfully");
-        }
-        catch (Exception ex)
-        {
-            var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
-            var logger = loggerFactory.CreateLogger("StorageInitialization");
-            logger.LogError(ex, "Failed to initialize storage infrastructure");
-            throw;
-        }
-        // ============= END STORAGE INITIALIZATION =============
-
-        await host.RunAsync();
+        logging.SetMinimumLevel(level);
     }
+});
+
+// ============= CONFIGURATION =============
+services.AddSingleton(config);
+
+// ============= CENTRALIZED CORE DI =============
+services.AddCoreServices(config, ServiceLayerType.Importer);
+
+// ============= PIPELINE & FACTORY =============
+services.AddSingleton<IListImporterFactory, ListImporterFactory>();
+services.AddSingleton<ImportListPipeline>();
+
+// ============= BUILD SERVICE PROVIDER =============
+var serviceProvider = services.BuildServiceProvider();
+
+// ============= RUN PIPELINE =============
+var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
+var pipeline = serviceProvider.GetRequiredService<ImportListPipeline>();
+
+logger.LogInformation("═══════════════════════════════════════");
+logger.LogInformation("   NextDnsBetBlocker Import Worker");
+logger.LogInformation("   Running in ACI (Azure Container)");
+logger.LogInformation("═══════════════════════════════════════");
+
+using var cts = new CancellationTokenSource();
+
+// Handle Ctrl+C gracefully
+Console.CancelKeyPress += (sender, e) =>
+{
+    e.Cancel = true;
+    logger.LogInformation("Shutdown signal received, gracefully stopping...");
+    cts.Cancel();
+};
+
+// Execute pipeline (runs once and returns)
+var result = await pipeline.ExecuteAsync(cts.Token);
+
+if (result.Success)
+{
+    logger.LogInformation("✓ Import Pipeline completed successfully");
+    Environment.Exit(0);
+}
+else
+{
+    logger.LogError("✗ Import Pipeline failed: {Error}", result.ErrorMessage ?? "Unknown error");
+    Environment.Exit(1);
 }
