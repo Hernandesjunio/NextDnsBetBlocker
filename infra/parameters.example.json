@@ -1,0 +1,37 @@
+{
+  "deployment": {
+    "subscriptionName": "Your Subscription Name",
+    "location": "eastus",
+    "resourceGroup": "dns-blocker-rg"
+  },
+  "acr": {
+    "name": "myacr",
+    "sku": "Basic",
+    "adminUserEnabled": true
+  },
+  "storage": {
+    "accountName": "azrsanotifications",
+    "connectionString": "DefaultEndpointsProtocol=https;AccountName=azrsanotifications;AccountKey=...;EndpointSuffix=core.windows.net"
+  },
+  "aci": {
+    "containerName": "importer-run",
+    "cpu": 1,
+    "memory": 1,
+    "restartPolicy": "Never"
+  },
+  "image": {
+    "registry": "myacr.azurecr.io",
+    "repository": "importer",
+    "tag": "v1.0.0",
+    "full": "myacr.azurecr.io/importer:v1.0.0"
+  },
+  "scheduler": {
+    "logicAppName": "importer-scheduler",
+    "frequency": "Week",
+    "interval": 1,
+    "dayOfWeek": "Sunday",
+    "hour": 0,
+    "minute": 0,
+    "timezone": "UTC"
+  }
+}
