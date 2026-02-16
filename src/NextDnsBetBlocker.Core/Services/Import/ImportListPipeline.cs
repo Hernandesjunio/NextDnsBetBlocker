@@ -126,7 +126,8 @@ public class ImportListPipeline
 
             // Decidir: full import ou diff (por simplicidade, sempre full por enquanto)
             _logger.LogInformation("Performing FULL import for {ListName}", config.ListName);
-            result.Metrics = await listImporter.ImportAsync(config, null, cancellationToken);
+            var progressReporter = CreateProgressReporter(config.ListName);
+            result.Metrics = await listImporter.ImportAsync(config, progressReporter, cancellationToken);
             result.ImportType = "Full";
 
             result.Success = true;
@@ -154,6 +155,25 @@ public class ImportListPipeline
             return $"{ts.Minutes:D2}:{ts.Seconds:D2}";
         else
             return $"{ts.Seconds}s";
+    }
+
+    /// <summary>
+    /// Cria um reporter de progresso que loga atualizações durante a importação
+    /// </summary>
+    private IProgress<ImportProgress> CreateProgressReporter(string listName)
+    {
+        return new Progress<ImportProgress>(progress =>
+        {
+            if (progress?.Metrics != null)
+            {
+                _logger.LogInformation(
+                    "[{ListName}] Progress: {Inserted} inserted | {Errors} errors | {Processed} processed",
+                    listName,
+                    progress.Metrics.TotalInserted,
+                    progress.Metrics.TotalErrors,
+                    progress.Metrics.TotalProcessed);
+            }
+        });
     }
 }
 

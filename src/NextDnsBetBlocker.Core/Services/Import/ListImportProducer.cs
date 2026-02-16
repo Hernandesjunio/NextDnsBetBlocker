@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 using System.IO.Compression;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
 /// <summary>
@@ -15,6 +16,7 @@ public class ListImportProducer : IListImportProducer
 {
     private readonly ILogger<ListImportProducer> _logger;
     private readonly HttpClient _httpClient;
+    private static readonly Regex LocalPatternRegex = new(@"local=/([^/]+)/", RegexOptions.Compiled);
 
     public ListImportProducer(ILogger<ListImportProducer> logger, HttpClient httpClient)
     {
@@ -38,7 +40,7 @@ public class ListImportProducer : IListImportProducer
                 "Starting production for {ListName} from {SourceUrl}",
                 config.ListName,
                 config.SourceUrl);
-
+                        
             await using (var stream = await GetSourceStreamAsync(config.SourceUrl, cancellationToken))
             {
                 if (stream == null)
@@ -188,7 +190,7 @@ public class ListImportProducer : IListImportProducer
                         _logger.LogDebug("Produced {Count} domains", lineCount);
                     }
                 }
-            }
+                }
 
             _logger.LogInformation("Total lines produced: {Count}", lineCount);
         }
@@ -196,15 +198,25 @@ public class ListImportProducer : IListImportProducer
 
     /// <summary>
     /// Extrai domínio da linha
-    /// Suporta formatos: domínio simples ou CSV com domínio na primeira coluna
+    /// Suporta formatos: domínio simples, CSV com domínio na segunda coluna, ou local=/dominio/
     /// </summary>
     private static string ExtractDomain(string line)
     {
-        // Se contém vírgula, é CSV - pegar primeiro campo
+        // Se contém padrão local=/dominio/
+        var localMatch = LocalPatternRegex.Match(line);
+        if (localMatch.Success)
+        {
+            return localMatch.Groups[1].Value.Trim().ToLowerInvariant();
+        }
+
+        // Se contém vírgula, é CSV - pegar segundo campo
         if (line.Contains(','))
         {
             var fields = line.Split(',');
-            return fields[1].Trim().ToLowerInvariant();
+            if (fields.Length > 1)
+            {
+                return fields[1].Trim().ToLowerInvariant();
+            }
         }
 
         // Caso contrário, considerar a linha inteira como domínio

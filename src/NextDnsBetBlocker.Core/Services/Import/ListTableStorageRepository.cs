@@ -5,34 +5,39 @@ using Azure.Data.Tables;
 using Microsoft.Extensions.Logging;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
+using System.Collections.Concurrent;
 
 /// <summary>
 /// Repositório para acesso ao Table Storage
 /// Implementa operações em batch com resiliência
+/// Pool de TableClient por tabela para melhor performance
 /// </summary>
 public class ListTableStorageRepository : IListTableStorageRepository
 {
-    private readonly TableClient _tableClient;
+    private readonly TableServiceClient _tableServiceClient;
     private readonly ILogger<ListTableStorageRepository> _logger;
+    private readonly ConcurrentDictionary<string, TableClient> _tableClientCache;
     private const int MaxBatchSize = 100; // Limite do Table Storage
 
     public ListTableStorageRepository(
         string connectionString,
-        string tableName,
         ILogger<ListTableStorageRepository> logger)
     {
         _logger = logger;
-        
-        var tableServiceClient = new TableServiceClient(connectionString);
-        _tableClient = tableServiceClient.GetTableClient(tableName);
+        _tableServiceClient = new TableServiceClient(connectionString);
+        _tableClientCache = new ConcurrentDictionary<string, TableClient>(StringComparer.OrdinalIgnoreCase);
     }
 
-    public ListTableStorageRepository(
-        TableClient tableClient,
-        ILogger<ListTableStorageRepository> logger)
+    /// <summary>
+    /// Obter ou criar TableClient com pool em cache
+    /// </summary>
+    private TableClient GetOrCreateTableClient(string tableName)
     {
-        _tableClient = tableClient;
-        _logger = logger;
+        if (string.IsNullOrWhiteSpace(tableName))
+            throw new ArgumentException("Table name cannot be empty", nameof(tableName));
+
+        return _tableClientCache.GetOrAdd(tableName, 
+            name => _tableServiceClient.GetTableClient(name));
     }
 
     public async Task<BatchOperationResult> UpsertBatchAsync(
@@ -40,6 +45,9 @@ public class ListTableStorageRepository : IListTableStorageRepository
         List<DomainListEntry> entries,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(tableName))
+            throw new ArgumentException("Table name is required", nameof(tableName));
+
         var result = new BatchOperationResult
         {
             ItemCount = entries.Count,
@@ -70,7 +78,7 @@ public class ListTableStorageRepository : IListTableStorageRepository
 
                 foreach (var chunk in chunks)
                 {
-                    var chunkResult = await ProcessBatchChunkAsync(chunk.ToList(), cancellationToken);
+                    var chunkResult = await ProcessBatchChunkAsync(tableName, chunk.ToList(), cancellationToken);
                     result.SuccessCount += chunkResult.SuccessCount;
                     result.FailureCount += chunkResult.FailureCount;
                 }
@@ -79,11 +87,11 @@ public class ListTableStorageRepository : IListTableStorageRepository
             }
 
             // Processar batch único
-            return await ProcessBatchChunkAsync(entries, cancellationToken);
+            return await ProcessBatchChunkAsync(tableName, entries, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Batch upsert failed");
+            _logger.LogError(ex, "Batch upsert failed for table {TableName}", tableName);
             result.FailureCount = entries.Count;
             result.ErrorMessage = ex.Message;
             throw;
@@ -95,6 +103,9 @@ public class ListTableStorageRepository : IListTableStorageRepository
         List<DomainListEntry> entries,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(tableName))
+            throw new ArgumentException("Table name is required", nameof(tableName));
+
         var result = new BatchOperationResult
         {
             ItemCount = entries.Count,
@@ -118,7 +129,7 @@ public class ListTableStorageRepository : IListTableStorageRepository
 
                 foreach (var chunk in chunks)
                 {
-                    var chunkResult = await ProcessDeleteChunkAsync(chunk.ToList(), cancellationToken);
+                    var chunkResult = await ProcessDeleteChunkAsync(tableName, chunk.ToList(), cancellationToken);
                     result.SuccessCount += chunkResult.SuccessCount;
                     result.FailureCount += chunkResult.FailureCount;
                 }
@@ -127,11 +138,11 @@ public class ListTableStorageRepository : IListTableStorageRepository
             }
 
             // Processar delete único
-            return await ProcessDeleteChunkAsync(entries, cancellationToken);
+            return await ProcessDeleteChunkAsync(tableName, entries, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Batch delete failed");
+            _logger.LogError(ex, "Batch delete failed for table {TableName}", tableName);
             result.FailureCount = entries.Count;
             result.ErrorMessage = ex.Message;
             throw;
@@ -144,9 +155,13 @@ public class ListTableStorageRepository : IListTableStorageRepository
         string rowKey,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(tableName))
+            throw new ArgumentException("Table name is required", nameof(tableName));
+
         try
         {
-            var response = await _tableClient.GetEntityAsync<TableEntity>(
+            var tableClient = GetOrCreateTableClient(tableName);
+            var response = await tableClient.GetEntityAsync<TableEntity>(
                 partitionKey,
                 rowKey,
                 cancellationToken: cancellationToken);
@@ -159,7 +174,7 @@ public class ListTableStorageRepository : IListTableStorageRepository
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error checking domain existence: {PartitionKey}/{RowKey}", partitionKey, rowKey);
+            _logger.LogError(ex, "Error checking domain existence in table {TableName}: {PartitionKey}/{RowKey}", tableName, partitionKey, rowKey);
             throw;
         }
     }
@@ -168,9 +183,13 @@ public class ListTableStorageRepository : IListTableStorageRepository
         string tableName,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(tableName))
+            throw new ArgumentException("Table name is required", nameof(tableName));
+
         try
         {
-            await _tableClient.CreateAsync(cancellationToken);
+            var tableClient = GetOrCreateTableClient(tableName);
+            await tableClient.CreateAsync(cancellationToken);
             _logger.LogInformation("Table {TableName} created or already exists", tableName);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 409)
@@ -186,6 +205,7 @@ public class ListTableStorageRepository : IListTableStorageRepository
     }
 
     private async Task<BatchOperationResult> ProcessBatchChunkAsync(
+        string tableName,
         List<DomainListEntry> entries,
         CancellationToken cancellationToken)
     {
@@ -198,6 +218,8 @@ public class ListTableStorageRepository : IListTableStorageRepository
 
         try
         {
+            var tableClient = GetOrCreateTableClient(tableName);
+
             // Agrupar por partition key para batch transactions
             var byPartition = entries
                 .GroupBy(e => e.PartitionKey)
@@ -227,17 +249,18 @@ public class ListTableStorageRepository : IListTableStorageRepository
                 // Executar batch transaction
                 try
                 {
-                    var response = await _tableClient.SubmitTransactionAsync(batch, cancellationToken);
+                    var response = await tableClient.SubmitTransactionAsync(batch, cancellationToken);
                     result.SuccessCount += batch.Count;
                     _logger.LogDebug(
-                        "Batch transaction succeeded: {Count} items in partition {Partition}",
+                        "Batch transaction succeeded in table {TableName}: {Count} items in partition {Partition}",
+                        tableName,
                         batch.Count,
                         partitionGroup.Key);
                 }
                 catch (Exception ex)
                 {
                     result.FailureCount += batch.Count;
-                    _logger.LogError(ex, "Batch transaction failed for partition {Partition}", partitionGroup.Key);
+                    _logger.LogError(ex, "Batch transaction failed for table {TableName} partition {Partition}", tableName, partitionGroup.Key);
                     throw;
                 }
             }
@@ -247,12 +270,13 @@ public class ListTableStorageRepository : IListTableStorageRepository
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process batch chunk");
+            _logger.LogError(ex, "Failed to process batch chunk for table {TableName}", tableName);
             throw;
         }
     }
 
     private async Task<BatchOperationResult> ProcessDeleteChunkAsync(
+        string tableName,
         List<DomainListEntry> entries,
         CancellationToken cancellationToken)
     {
@@ -265,6 +289,8 @@ public class ListTableStorageRepository : IListTableStorageRepository
 
         try
         {
+            var tableClient = GetOrCreateTableClient(tableName);
+
             // Agrupar por partition key
             var byPartition = entries
                 .GroupBy(e => e.PartitionKey)
@@ -291,17 +317,18 @@ public class ListTableStorageRepository : IListTableStorageRepository
 
                 try
                 {
-                    await _tableClient.SubmitTransactionAsync(batch, cancellationToken);
+                    await tableClient.SubmitTransactionAsync(batch, cancellationToken);
                     result.SuccessCount += batch.Count;
                     _logger.LogDebug(
-                        "Delete batch succeeded: {Count} items from partition {Partition}",
+                        "Delete batch succeeded in table {TableName}: {Count} items from partition {Partition}",
+                        tableName,
                         batch.Count,
                         partitionGroup.Key);
                 }
                 catch (Exception ex)
                 {
                     result.FailureCount += batch.Count;
-                    _logger.LogError(ex, "Delete batch failed for partition {Partition}", partitionGroup.Key);
+                    _logger.LogError(ex, "Delete batch failed for table {TableName} partition {Partition}", tableName, partitionGroup.Key);
                     throw;
                 }
             }
@@ -310,7 +337,7 @@ public class ListTableStorageRepository : IListTableStorageRepository
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process delete chunk");
+            _logger.LogError(ex, "Failed to process delete chunk for table {TableName}", tableName);
             throw;
         }
     }

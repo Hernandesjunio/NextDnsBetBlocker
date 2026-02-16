@@ -9,6 +9,7 @@ using NextDnsBetBlocker.Core.Models;
 /// Importador específico para Tranco List
 /// Configuração lida do appsettings.json via IOptions
 /// </summary>
+[Obsolete("",error: true )]
 public class TrancoListImporter
 {
     private readonly IListImporter _genericImporter;
