@@ -29,52 +29,53 @@ public static class CoreServiceCollectionExtensions
         IConfiguration configuration,
         ServiceLayerType layerType)
     {
-        var settings = configuration.Get<CoreSettings>() ?? new CoreSettings();
-
         // ============= SHARED SERVICES (ambas camadas) =============
-        RegisterSharedServices(services, configuration, settings);
+        RegisterSharedServices(services, configuration);
 
         // ============= LAYER-SPECIFIC SERVICES =============
         switch (layerType)
         {
             case ServiceLayerType.Importer:
-                RegisterImporterServices(services, configuration, settings);
+                RegisterImporterServices(services, configuration);
                 break;
 
             case ServiceLayerType.Analysis:
-                RegisterAnalysisServices(services, configuration, settings);
+                RegisterAnalysisServices(services, configuration);
                 break;
 
             default:
                 throw new InvalidOperationException($"Unknown service layer type: {layerType}");
         }
 
-        // ============= SETTINGS =============
-        services.AddSingleton(settings);
-
         return services;
     }
+
 
     /// <summary>
     /// Serviços compartilhados por ambas camadas
     /// </summary>
     private static void RegisterSharedServices(
         IServiceCollection services,
-        IConfiguration configuration,
-        CoreSettings settings)
+        IConfiguration configuration)
     {
-        // ============= AZURE STORAGE =============
-        if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
-        {
-            var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
-            var blobServiceClient = new BlobServiceClient(settings.AzureStorageConnectionString);
-
-            services.AddSingleton(tableServiceClient);
-            services.AddSingleton(blobServiceClient);
-        }
+        services.AddSingleton(c => new TableServiceClient(c.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString));
+        services.AddSingleton(c => new BlobServiceClient(c.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString));
 
         // ============= MEMORY CACHE =============
         services.AddMemoryCache();
+
+        // ============= CHECKPOINT STORE (Shared) =============
+
+        services.AddSingleton<ICheckpointStore>(sp =>
+        {
+            var tableServiceClient = sp.GetRequiredService<TableServiceClient>();
+            var checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
+            checkpointTableClient.CreateIfNotExists();
+            return new CheckpointStore(
+                checkpointTableClient,
+                sp.GetRequiredService<ILogger<CheckpointStore>>());
+        });
+
 
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
         services.AddSingleton<IStorageInfrastructureInitializer>(sp =>
@@ -82,7 +83,7 @@ public static class CoreServiceCollectionExtensions
             var tableRepo = sp.GetRequiredService<IListTableStorageRepository>();
             return new StorageInfrastructureInitializer(
                 tableRepo,
-                settings.AzureStorageConnectionString,
+                sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString,
                 sp.GetRequiredService<ILogger<StorageInfrastructureInitializer>>());
         });
     }
@@ -92,12 +93,11 @@ public static class CoreServiceCollectionExtensions
     /// </summary>
     private static void RegisterImporterServices(
         IServiceCollection services,
-        IConfiguration configuration,
-        CoreSettings settings)
+        IConfiguration configuration)
     {
         // ============= IMPORT INFRASTRUCTURE =============
         services.AddSingleton<IImportMetricsCollector, ImportMetricsCollector>();
-        services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
+        
         services.AddSingleton<IImportRateLimiter>(sp => new ImportRateLimiter(150000));
 
         // ============= HTTP CLIENT =============
@@ -125,18 +125,7 @@ public static class CoreServiceCollectionExtensions
         });
 
         // ============= CHECKPOINT STORE =============
-        if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
-        {
-            services.AddSingleton<ICheckpointStore>(sp =>
-            {
-                var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
-                var tableClient = tableServiceClient.GetTableClient("ImportCheckpoint");
-                tableClient.CreateIfNotExists();
-                return new CheckpointStore(
-                    tableClient,
-                    sp.GetRequiredService<ILogger<CheckpointStore>>());
-            });
-        }
+        // ICheckpointStore é registrado em RegisterSharedServices
 
         // ============= PARALLEL IMPORT CONFIG =============
         services.AddOptions<ParallelImportConfig>()
@@ -153,7 +142,7 @@ public static class CoreServiceCollectionExtensions
         // ============= STORAGE REPOSITORIES =============
         services.AddSingleton<IListTableStorageRepository>(sp =>
         {
-            var connString = settings.AzureStorageConnectionString;
+            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
             return new ListTableStorageRepository(
                 connString,
                 sp.GetRequiredService<ILogger<ListTableStorageRepository>>());
@@ -161,7 +150,7 @@ public static class CoreServiceCollectionExtensions
 
         services.AddSingleton<IListBlobRepository>(sp =>
         {
-            var connString = settings.AzureStorageConnectionString;
+            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
             return new ListBlobRepository(
                 connString,
                 "tranco-lists",
@@ -169,19 +158,7 @@ public static class CoreServiceCollectionExtensions
         });
 
         // ============= LIST TABLE PROVIDER (with cache) =============
-        services.AddSingleton<IListTableProvider>(sp =>
-        {
-            var connString = settings.AzureStorageConnectionString;
-            var tableServiceClient = new TableServiceClient(connString);
-            var tableClient = tableServiceClient.GetTableClient("TrancoList");
-            var cache = sp.GetRequiredService<IMemoryCache>();
-            var partitionStrategy = sp.GetRequiredService<IPartitionKeyStrategy>();
-            return new ListTableProvider(
-                tableClient,
-                cache,
-                partitionStrategy,
-                sp.GetRequiredService<ILogger<ListTableProvider>>());
-        });
+        RegisterListTableProvider(services);
 
         // ============= GENERIC LIST IMPORTER =============
         services.AddSingleton<GenericListImporter>(sp =>
@@ -210,7 +187,7 @@ public static class CoreServiceCollectionExtensions
         // Register HageziProvider for Importer layer
         services.AddSingleton<IHageziProvider>(sp =>
         {
-            var connString = settings.AzureStorageConnectionString;
+            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
             var blobServiceClient = new BlobServiceClient(connString);
             var containerClient = blobServiceClient.GetBlobContainerClient("hagezi-lists");
 
@@ -221,9 +198,28 @@ public static class CoreServiceCollectionExtensions
                 sp.GetRequiredService<IOptions<HageziProviderConfig>>());
         });
 
-      
+
         // ============= TRANCO ALLOW LIST PROVIDER =============
         services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();
+    }
+
+    private static void RegisterListTableProvider(IServiceCollection services)
+    {
+        services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
+
+        services.AddSingleton<IListTableProvider>(sp =>
+        {
+            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
+            var tableServiceClient = new TableServiceClient(connString);
+            var tableClient = tableServiceClient.GetTableClient("TrancoList");
+            var cache = sp.GetRequiredService<IMemoryCache>();
+            var partitionStrategy = sp.GetRequiredService<IPartitionKeyStrategy>();
+            return new ListTableProvider(
+                tableClient,
+                cache,
+                partitionStrategy,
+                sp.GetRequiredService<ILogger<ListTableProvider>>());
+        });
     }
 
     /// <summary>
@@ -231,8 +227,7 @@ public static class CoreServiceCollectionExtensions
     /// </summary>
     private static void RegisterAnalysisServices(
         IServiceCollection services,
-        IConfiguration configuration,
-        CoreSettings settings)
+        IConfiguration configuration)
     {
         // ============= HTTP CLIENTS =============
         services.AddHttpClient<INextDnsClient, NextDnsClient>();
@@ -242,74 +237,36 @@ public static class CoreServiceCollectionExtensions
                 client.Timeout = TimeSpan.FromSeconds(30);
             });
 
-        // ============= NEXTDNS CLIENT CONFIG (with IOptions) =============
-        services.AddOptions<NextDnsClientConfig>()
-            .Bind(configuration.GetSection("NextDns"))
-            .ValidateOnStart();
-
         // ============= HAGEZI PROVIDER CONFIG (with IOptions) =============
         services.AddOptions<HageziProviderConfig>()
             .Bind(configuration.GetSection("HaGeZi"))
             .ValidateOnStart();
 
+
+        RegisterListTableProvider(services);
+
         // ============= AZURE STORAGE - TABLE CLIENTS =============
-        if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
-        {
-            var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
-            var tableClient = tableServiceClient.GetTableClient("BlockedDomains");
-            var checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
-            var suspectTableClient = tableServiceClient.GetTableClient("GamblingSuspects");
 
-            tableClient.CreateIfNotExists();
-            checkpointTableClient.CreateIfNotExists();
-            suspectTableClient.CreateIfNotExists();
+        services.AddSingleton<IBlockedDomainStore>(sp =>
+            new BlockedDomainStore(sp.GetRequiredService<TableServiceClient>().GetTableClient("BlockedDomains"), sp.GetRequiredService<ILogger<BlockedDomainStore>>()));
+        // ICheckpointStore já é registrado em RegisterSharedServices
+        services.AddSingleton<IGamblingSuspectStore>(sp =>
+            new GamblingSuspectStore(sp.GetRequiredService<TableServiceClient>().GetTableClient("GamblingSuspects"), sp.GetRequiredService<ILogger<GamblingSuspectStore>>()));
 
-            services.AddSingleton(tableClient);
-            services.AddSingleton(suspectTableClient);
-            services.AddSingleton<IBlockedDomainStore>(sp =>
-                new BlockedDomainStore(tableClient, sp.GetRequiredService<ILogger<BlockedDomainStore>>()));
-            services.AddSingleton<ICheckpointStore>(sp =>
-                new CheckpointStore(checkpointTableClient, sp.GetRequiredService<ILogger<CheckpointStore>>()));
-            services.AddSingleton<IGamblingSuspectStore>(sp =>
-                new GamblingSuspectStore(suspectTableClient, sp.GetRequiredService<ILogger<GamblingSuspectStore>>()));
-        }
-        else
-        {
-            // Local file storage only if Worker is being used locally
-            // Note: LocalBlockedDomainStore and LocalCheckpointStore are in Worker project
-            // They should be registered in Worker's Program.cs for local development
-        }
 
-        // ============= BLOB STORAGE FOR HAGEZI =============
-        BlobContainerClient containerClient;
-        if (settings.UseBlobStorage && !string.IsNullOrEmpty(settings.AzureStorageConnectionString))
-        {
-            var blobServiceClient = new BlobServiceClient(settings.AzureStorageConnectionString);
-            containerClient = blobServiceClient.GetBlobContainerClient("hagezi-gambling");
+        // ============= BLOB STORAGE FOR HAGEZI =============        
+        
+        services.AddSingleton<IHageziProvider>(sp =>
+            new HageziProvider(
+                sp.GetRequiredService<BlobServiceClient>().GetBlobContainerClient("hagezi-gambling"),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<ILogger<HageziProvider>>(),
+                sp.GetRequiredService<IOptions<HageziProviderConfig>>()));  // ← Injetar IOptions
 
-            services.AddSingleton(containerClient);
-            services.AddSingleton<IHageziProvider>(sp =>
-                new HageziProvider(
-                    containerClient,
-                    sp.GetRequiredService<IHttpClientFactory>(),
-                    sp.GetRequiredService<ILogger<HageziProvider>>(),
-                    sp.GetRequiredService<IOptions<HageziProviderConfig>>()));  // ← Injetar IOptions
-        }
-        else
-        {
-            // Use local filesystem for development
-            // Note: LocalBlobContainerClient is in Worker project
-            // For development, it should be registered in Worker's Program.cs
-            var localPath = Path.Combine(Directory.GetCurrentDirectory(), "data");
-            Directory.CreateDirectory(localPath);
-            containerClient = null; // Will be set by Worker if needed
-        }
 
         // ============= ALLOWLIST PROVIDER =============
         var allowlistPath = Path.Combine(Directory.GetCurrentDirectory(), "allowlist.txt");
-        services.AddSingleton<IAllowlistProvider>(sp =>
-            new AllowlistProvider(allowlistPath, sp.GetRequiredService<ILogger<AllowlistProvider>>()));
-
+        
         // ============= CLASSIFIER =============
         services.AddSingleton<IBetClassifier, BetClassifier>();
 
@@ -322,38 +279,18 @@ public static class CoreServiceCollectionExtensions
         // ============= QUEUE PUBLISHER FOR ANALYSIS =============
         services.AddSingleton<ISuspectDomainQueuePublisher>(sp =>
         {
-            var connString = settings.AzureStorageConnectionString;
+            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
             return new SuspectDomainQueuePublisher(
                 connString,
                 sp.GetRequiredService<ILogger<SuspectDomainQueuePublisher>>());
         });
 
         // ============= BET BLOCKER PIPELINE =============
-        services.AddSingleton<IBetBlockerPipeline>(sp =>
-            new BetBlockerPipeline(
-                sp.GetRequiredService<INextDnsClient>(),
-                sp.GetRequiredService<ICheckpointStore>(),
-                sp.GetRequiredService<IBlockedDomainStore>(),
-                sp.GetRequiredService<IHageziProvider>(),
-                sp.GetRequiredService<IBetClassifier>(),
-                sp.GetRequiredService<ILogger<BetBlockerPipeline>>(),
-                sp.GetRequiredService<ILogsProducer>(),
-                sp.GetRequiredService<IClassifierConsumer>(),
-                sp.GetRequiredService<ITrancoAllowlistConsumer>(),
-                sp.GetRequiredService<IAnalysisConsumer>(),
-                settings.RateLimitPerSecond));
+        services.AddSingleton<IBetBlockerPipeline, BetBlockerPipeline>();
 
         // ============= GAMBLING SUSPECT ANALYZER =============
         services.AddSingleton<IGamblingSuspectAnalyzer, GamblingSuspectAnalyzer>();
     }
 }
 
-/// <summary>
-/// Core settings compartilhadas entre Importer e Analysis
-/// </summary>
-public class CoreSettings
-{
-    public string AzureStorageConnectionString { get; set; } = string.Empty;
-    public bool UseBlobStorage { get; set; } = true;
-    public int RateLimitPerSecond { get; set; } = 1000;
-}
+

@@ -10,7 +10,7 @@ using NextDnsBetBlocker.Core.Models;
 
 /// <summary>
 /// NextDNS API Client
-/// Configuração via IOptions<NextDnsClientConfig>
+/// Configuração via IOptions<WorkerSettings>
 /// API Key lido de appsettings.json ou User Secrets (NÃO hardcoded!)
 /// </summary>
 public class NextDnsClient : INextDnsClient
@@ -23,19 +23,19 @@ public class NextDnsClient : INextDnsClient
     public NextDnsClient(
         HttpClient httpClient,
         ILogger<NextDnsClient> logger,
-        IOptions<NextDnsClientConfig> options)  // ← IOptions injetado
+        IOptions<WorkerSettings> options)  // ← IOptions<WorkerSettings> injetado
     {
         _httpClient = httpClient;
         _logger = logger;
-        
-        var config = options.Value;
-        _baseUrl = config.BaseUrl;
-        _apiKey = config.ApiKey;
+
+        var settings = options.Value;
+        _baseUrl = settings.NextDnsBaseUrl;
+        _apiKey = settings.NextDnsApiKey;
 
         if (string.IsNullOrEmpty(_apiKey))
         {
             throw new InvalidOperationException(
-                "NextDns:ApiKey is not configured. Please set it via User Secrets or appsettings.json");
+                "WorkerSettings:NextDnsApiKey is not configured. Please set it via User Secrets or appsettings.json");
         }
 
         _logger.LogInformation("NextDnsClient initialized with BaseUrl: {BaseUrl}", _baseUrl);
@@ -258,15 +258,4 @@ public class NextDnsClient : INextDnsClient
 
         return await operation();
     }
-}
-
-/// <summary>
-/// Configuração para NextDnsClient
-/// Lido de appsettings.json → IOptions
-/// </summary>
-public class NextDnsClientConfig
-{
-    public string ApiKey { get; set; } = string.Empty;
-    public string BaseUrl { get; set; } = "https://api.nextdns.io";
-    public int RateLimitPerSecond { get; set; } = 1000;
 }

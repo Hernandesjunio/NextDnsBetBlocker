@@ -52,7 +52,11 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
                 processed++;
 
                 var domain = logEntry.Domain.ToLowerInvariant();
-
+                /*
+                 * TODO: Adicionar consulta por memorycache primeiro antes de consultar o table storage, pois há muitos sites que
+                 * repetem, principalmente cdn. Nesse caso tem que fazer a consulta efetiva, primeira consulta não tem nada (null), 
+                 * consulta no table storage. Caso a resposta do tabel storage indique que não há nada, guarde o objeto com o estado de exists: true ou false. (caso tenha dúvida faça pergunta)
+                */
                 // Check if domain exists in Tranco List (Table Storage query)
                 // Eficiente: point query + cache 5 minutos
                 var exists = await _tableProvider.DomainExistsAsync(

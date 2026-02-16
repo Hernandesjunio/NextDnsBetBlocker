@@ -144,6 +144,11 @@ public class GamblingKeywordDetector
     /// </summary>
     public static int AnalyzeDomainStructure(string domain)
     {
+        /*
+         * TODO no hagezi há vários termos muito mais amplos para fazer essa verificação que dá para utilizar como base de inteligência para fazer essas comparações, 
+         * se não me engano lá tem wildcards acho que é isso, que tem vários termos que podem ser utilizados.
+         * talvez dá para eu treinar alguma llm local ou fazer uma de teste para isso, bem básica, pois eu não sei como funciona
+         */
         var score = 0;
         var lowercaseDomain = domain.ToLowerInvariant();
 

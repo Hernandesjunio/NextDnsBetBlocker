@@ -13,21 +13,18 @@ using NextDnsBetBlocker.Core.Models;
 public class ClassifierConsumer : IClassifierConsumer
 {
     private readonly IBlockedDomainStore _blockedDomainStore;
-    private readonly IHageziProvider _hageziProvider;
-    private readonly IAllowlistProvider _allowlistProvider;
+    private readonly IHageziProvider _hageziProvider;    
     private readonly IBetClassifier _betClassifier;
     private readonly ILogger<ClassifierConsumer> _logger;
 
     public ClassifierConsumer(
         IBlockedDomainStore blockedDomainStore,
-        IHageziProvider hageziProvider,
-        IAllowlistProvider allowlistProvider,
+        IHageziProvider hageziProvider,        
         IBetClassifier betClassifier,
         ILogger<ClassifierConsumer> logger)
     {
         _blockedDomainStore = blockedDomainStore;
-        _hageziProvider = hageziProvider;
-        _allowlistProvider = allowlistProvider;
+        _hageziProvider = hageziProvider;        
         _betClassifier = betClassifier;
         _logger = logger;
     }
@@ -41,9 +38,8 @@ public class ClassifierConsumer : IClassifierConsumer
         try
         {
             _logger.LogInformation("ClassifierConsumer started for profile {ProfileId}", profileId);
-
-            var allowlist = _allowlistProvider.GetAllowlist();
-            var gamblingDomains = await _hageziProvider.GetGamblingDomainsAsync();
+                        
+            //var gamblingDomains = await _hageziProvider.GetGamblingDomainsAsync();
 
             int processed = 0;
             int allowlisted = 0;
@@ -60,14 +56,6 @@ public class ClassifierConsumer : IClassifierConsumer
 
                 var domain = logEntry.Domain.ToLowerInvariant();
 
-                // Check allowlist
-                if (allowlist.Contains(domain))
-                {
-                    allowlisted++;
-                    _logger.LogDebug("Domain {Domain} is allowlisted", domain);
-                    continue;
-                }
-
                 // Check if already blocked
                 if (await _blockedDomainStore.IsBlockedAsync(profileId, domain))
                 {
@@ -76,27 +64,28 @@ public class ClassifierConsumer : IClassifierConsumer
                     continue;
                 }
 
-                // Check if in HaGeZi gambling list (known gambling)
-                if (gamblingDomains.Contains(domain))
-                {
-                    // Already known gambling - block immediately
-                    await _blockedDomainStore.MarkBlockedAsync(profileId, domain);
-                    _logger.LogInformation("Blocked known gambling domain {Domain}", domain);
-                    continue;
-                }
+                /* 
+                 * TODO refatorar para pegar do cache ou table storage                 
+                 */
 
+                //// Check if in HaGeZi gambling list (known gambling)
+                //if (gamblingDomains.Contains(domain))
+                //{
+                //    // Already known gambling - block immediately
+                //    await _blockedDomainStore.MarkBlockedAsync(profileId, domain);
+                //    _logger.LogInformation("Blocked known gambling domain {Domain}", domain);
+                //    continue;
+                //}
+
+                /* TODO refatorar para classificar sem buscar dados de fora*/
                 // Check with BetClassifier
-                if (!_betClassifier.IsBetDomain(domain))
-                {
-                    notGambling++;
-                    _logger.LogDebug("Domain {Domain} is not classified as gambling", domain);
-                    continue;
-                }
-
-                // Domain is suspicious - send to analysis
-                //suspects++;
+                //if (!_betClassifier.IsBetDomain(domain))
+                //{
+                //    notGambling++;
+                //    _logger.LogDebug("Domain {Domain} is not classified as gambling", domain);
+                //    continue;
+                //}
                 
-
                 // Send with backpressure (waits if output channel buffer is full)
                 await outputChannel.Writer.WriteAsync(logEntry, cancellationToken);
 

@@ -6,43 +6,28 @@ using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 
 public class BetBlockerPipeline : IBetBlockerPipeline
-{
-    private readonly INextDnsClient _nextDnsClient;
-    private readonly ICheckpointStore _checkpointStore;
-    private readonly IBlockedDomainStore _blockedDomainStore;
+{    
     private readonly IHageziProvider _hageziProvider;
-    private readonly IBetClassifier _betClassifier;
     private readonly ILogger<BetBlockerPipeline> _logger;
-    private readonly int _rateLimitPerSecond;
     private readonly ILogsProducer _logsProducer;
     private readonly IClassifierConsumer _classifierConsumer;
     private readonly ITrancoAllowlistConsumer _trancoAllowlistConsumer;
     private readonly IAnalysisConsumer _analysisConsumer;
 
-    public BetBlockerPipeline(
-        INextDnsClient nextDnsClient,
-        ICheckpointStore checkpointStore,
-        IBlockedDomainStore blockedDomainStore,
+    public BetBlockerPipeline(        
         IHageziProvider hageziProvider,
-        IBetClassifier betClassifier,
         ILogger<BetBlockerPipeline> logger,
         ILogsProducer logsProducer,
         IClassifierConsumer classifierConsumer,
         ITrancoAllowlistConsumer trancoAllowlistConsumer,
-        IAnalysisConsumer analysisConsumer,
-        int rateLimitPerSecond = 5)
-    {
-        _nextDnsClient = nextDnsClient;
-        _checkpointStore = checkpointStore;
-        _blockedDomainStore = blockedDomainStore;
-        _hageziProvider = hageziProvider;
-        _betClassifier = betClassifier;
+        IAnalysisConsumer analysisConsumer)
+    {        
         _logger = logger;
         _logsProducer = logsProducer;
         _classifierConsumer = classifierConsumer;
         _trancoAllowlistConsumer = trancoAllowlistConsumer;
         _analysisConsumer = analysisConsumer;
-        _rateLimitPerSecond = rateLimitPerSecond;
+        _hageziProvider = hageziProvider;
     }
 
     public async Task<BlockerRunStatistics> ProcessLogsAsync(string profileId)

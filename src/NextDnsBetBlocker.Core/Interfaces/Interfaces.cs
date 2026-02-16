@@ -72,19 +72,6 @@ public interface IHageziProvider
     Task RefreshAsync();
 }
 
-public interface IAllowlistProvider
-{
-    /// <summary>
-    /// Gets the local allowlist domains
-    /// </summary>
-    ISet<string> GetAllowlist();
-
-    /// <summary>
-    /// Reloads the allowlist from disk
-    /// </summary>
-    Task ReloadAsync();
-}
-
 public interface IBetClassifier
 {
     /// <summary>
