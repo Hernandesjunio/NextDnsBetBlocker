@@ -2,7 +2,9 @@ namespace NextDnsBetBlocker.Worker;
 
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
+using NextDnsBetBlocker.Core.Models;
 
 public class WorkerService : BackgroundService
 {
@@ -13,11 +15,11 @@ public class WorkerService : BackgroundService
     public WorkerService(
         IBetBlockerPipeline pipeline,
         ILogger<WorkerService> logger,
-        WorkerSettings settings)
+        IOptions<WorkerSettings> optionsSettings)
     {
         _pipeline = pipeline;
         _logger = logger;
-        _settings = settings;
+        _settings = optionsSettings.Value;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -44,10 +46,11 @@ public class WorkerService : BackgroundService
     private async Task ProcessLogsPeriodicAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(_settings.ProcessingIntervalSeconds));
+        bool isFirst = true;
 
         try
         {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
+            while (isFirst || await timer.WaitForNextTickAsync(stoppingToken))
             {
                 try
                 {
@@ -56,6 +59,10 @@ public class WorkerService : BackgroundService
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error processing logs");
+                }
+                finally
+                {
+                    isFirst = false;
                 }
             }
         }

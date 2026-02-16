@@ -6,8 +6,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.DependencyInjection;
 using NextDnsBetBlocker.Core.Interfaces;
+using NextDnsBetBlocker.Core.Models;
 using NextDnsBetBlocker.Core.Services;
 
 /// <summary>
@@ -47,18 +49,16 @@ public static class Program
                 // All dependency injection is now in CoreServiceCollectionExtensions
                 services.AddCoreServices(context.Configuration, ServiceLayerType.Analysis);
 
+                // ============= WORKER SETTINGS (IOptions) =============
+                services.AddOptions<WorkerSettings>()
+                    .Bind(context.Configuration.GetSection("WorkerSettings"))
+                    .ValidateOnStart();
+
                 // ============= WORKER-SPECIFIC SERVICES =============
                 services.AddSingleton<BlockedDomainsSeeder>();
                 services.AddSingleton<WorkerService>();
-                services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<WorkerService>());
+                services.AddSingleton<IHostedService,WorkerService>();
 
-                // Store checkpoint client for seeding
-                var settings = context.Configuration.Get<CoreSettings>() ?? new CoreSettings();
-                if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
-                {
-                    var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
-                    _checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
-                }
             })
             .ConfigureLogging((context, logging) =>
             {
@@ -73,6 +73,15 @@ public static class Program
             })
             .Build();
 
+        var settings = host.Services.GetRequiredService<IOptions<WorkerSettings>>().Value; ;
+
+        // Store checkpoint client for seeding                
+        if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
+        {
+            var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
+            _checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
+
+        }
         // ============= SEED CHECKPOINT DATA =============
         if (_checkpointTableClient != null)
         {
