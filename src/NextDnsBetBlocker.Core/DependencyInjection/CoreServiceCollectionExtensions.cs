@@ -253,9 +253,15 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IGamblingSuspectStore>(sp =>
             new GamblingSuspectStore(sp.GetRequiredService<TableServiceClient>().GetTableClient("GamblingSuspects"), sp.GetRequiredService<ILogger<GamblingSuspectStore>>()));
 
+        // ============= HAGEZI GAMBLING STORE (Table Storage Query) =============
+        services.AddSingleton<IHageziGamblingStore>(sp =>
+            new HageziGamblingStore(
+                sp.GetRequiredService<TableServiceClient>().GetTableClient("HageziGambling"),
+                sp.GetRequiredService<ILogger<HageziGamblingStore>>()));
+
 
         // ============= BLOB STORAGE FOR HAGEZI =============        
-        
+
         services.AddSingleton<IHageziProvider>(sp =>
             new HageziProvider(
                 sp.GetRequiredService<BlobServiceClient>().GetBlobContainerClient("hagezi-gambling"),
@@ -263,10 +269,6 @@ public static class CoreServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<HageziProvider>>(),
                 sp.GetRequiredService<IOptions<HageziProviderConfig>>()));  // ← Injetar IOptions
 
-
-        // ============= ALLOWLIST PROVIDER =============
-        var allowlistPath = Path.Combine(Directory.GetCurrentDirectory(), "allowlist.txt");
-        
         // ============= CLASSIFIER =============
         services.AddSingleton<IBetClassifier, BetClassifier>();
 

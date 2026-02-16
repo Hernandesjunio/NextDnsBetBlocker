@@ -8,8 +8,7 @@ public class BlockedDomainStore : IBlockedDomainStore
 {
     private readonly TableClient _tableClient;
     private readonly ILogger<BlockedDomainStore> _logger;
-    private const string TableName = "BlockedDomains";
-
+    
     public BlockedDomainStore(TableClient tableClient, ILogger<BlockedDomainStore> logger)
     {
         _tableClient = tableClient;

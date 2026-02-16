@@ -52,7 +52,7 @@ public class TrancoAllowlistConsumer : ITrancoAllowlistConsumer
                 processed++;
 
                 var domain = logEntry.Domain.ToLowerInvariant();
-               
+               /*TODO fazer validação dos domínios de forma paralela suportando maxdegree or parallelism*/
                 // Check if domain exists in Tranco List (Table Storage query)
                 // Eficiente: point query + cache 5 minutos
                 var exists = await _tableProvider.DomainExistsAsync(
