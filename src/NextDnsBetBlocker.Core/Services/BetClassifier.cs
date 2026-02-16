@@ -14,6 +14,7 @@ public class BetClassifier : IBetClassifier
         _logger = logger;
     }
 
+    [Obsolete("", error:true)]
     public bool IsBetDomain(string domain)
     {
         var normalizedDomain = NormalizeDomain(domain);

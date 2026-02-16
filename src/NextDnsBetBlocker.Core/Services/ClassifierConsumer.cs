@@ -75,14 +75,6 @@ public class ClassifierConsumer : IClassifierConsumer
                     continue;
                 }
 
-                // Check 3: Classify with BetClassifier
-                if (!_betClassifier.IsBetDomain(domain))
-                {
-                    notGambling++;
-                    _logger.LogDebug("Domain {Domain} is not classified as gambling", domain);
-                    continue;
-                }
-
                 // Domain is suspicious - forward to next consumer
                 suspects++;
                 await outputChannel.Writer.WriteAsync(logEntry, cancellationToken);
