@@ -26,28 +26,15 @@ public class HageziProvider : IHageziProvider
     private const string BlobNameWildcard = "hagezi-gambling-wildcard.txt";
 
     /// <summary>
-    /// Constructor with default container name (hagezi-gambling)
-    /// Used for Analysis layer (cloud)
-    /// </summary>
-    public HageziProvider(
-        BlobServiceClient blobServiceClient,
-        IHttpClientFactory httpClientFactory,
-        ILogger<HageziProvider> logger,
-        IOptions<HageziProviderConfig> options)
-        : this(blobServiceClient, "hagezi-gambling", httpClientFactory, logger, options)
-    {
-    }
-
-    /// <summary>
     /// Constructor with custom container name
-    /// Used for Importer layer (local) with "hagezi-lists"
+    /// Used for both Analysis layer ("hagezi-gambling") and Importer layer ("hagezi-lists")
     /// </summary>
     public HageziProvider(
         BlobServiceClient blobServiceClient,
         string containerName,
         IHttpClientFactory httpClientFactory,
         ILogger<HageziProvider> logger,
-        IOptions<HageziProviderConfig> options)  // ← IOptions injetado
+        IOptions<HageziProviderConfig> options)
     {
         var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
         _containerClient = containerClient;
@@ -66,8 +53,8 @@ public class HageziProvider : IHageziProvider
         }
 
         _logger.LogInformation(
-            "HageziProvider initialized with AdblockUrl: {AdblockUrl}, WildcardUrl: {WildcardUrl}, CacheExpire: {Hours}h",
-            _adblockUrl, _wildcardUrl, _cacheExpireHours);
+            "HageziProvider initialized with ContainerName: {ContainerName}, AdblockUrl: {AdblockUrl}, WildcardUrl: {WildcardUrl}, CacheExpire: {Hours}h",
+            containerName, _adblockUrl, _wildcardUrl, _cacheExpireHours);
     }
 
     public async Task<HashSet<string>> GetGamblingDomainsAsync()

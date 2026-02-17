@@ -246,8 +246,13 @@ public static class CoreServiceCollectionExtensions
 
 
         // ============= BLOB STORAGE FOR HAGEZI =============        
-        // Uses default container "hagezi-gambling" via parameterless constructor
-        services.AddSingleton<IHageziProvider, HageziProvider>();
+        services.AddSingleton<IHageziProvider>(sp =>
+            new HageziProvider(
+                sp.GetRequiredService<BlobServiceClient>(),
+                "hagezi-gambling",
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<ILogger<HageziProvider>>(),
+                sp.GetRequiredService<IOptions<HageziProviderConfig>>()));
 
         // ============= CLASSIFIER =============
         services.AddSingleton<IBetClassifier, BetClassifier>();
