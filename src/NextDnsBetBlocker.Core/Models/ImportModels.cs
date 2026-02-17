@@ -267,6 +267,29 @@ public class BatchOperationResult
 }
 
 /// <summary>
+/// Tipo de operação de importação
+/// Especifica se será inserção (Add/Upsert) ou deleção (Remove)
+/// </summary>
+public enum ImportOperationType
+{
+    /// <summary>
+    /// Inserir ou atualizar domínios (Upsert)
+    /// Utilizado em:
+    /// - Primeira carga (ImportAsync)
+    /// - Importação diferencial para adicionar novos domínios (ImportDiffAsync)
+    /// </summary>
+    Add = 0,
+
+    /// <summary>
+    /// Remover domínios (Delete)
+    /// Utilizado em:
+    /// - Importação diferencial para remover domínios antigos (ImportDiffAsync)
+    /// - Limpeza em massa ou quarentena de listas
+    /// </summary>
+    Remove = 1
+}
+
+/// <summary>
 /// Entidade de domínio para Table Storage
 /// </summary>
 public class DomainListEntry

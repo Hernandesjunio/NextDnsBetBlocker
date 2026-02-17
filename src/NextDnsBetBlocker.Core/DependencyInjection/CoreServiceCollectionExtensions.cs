@@ -86,9 +86,6 @@ public static class CoreServiceCollectionExtensions
 
         services.AddSingleton<IImportRateLimiter>(sp => new ImportRateLimiter(150000));
 
-        // ============= HTTP CLIENT =============
-        services.AddHttpClient<IListImportProducer, ListImportProducer>();
-
         // ============= LIST IMPORT CONFIGS =============
         // Register ListImportConfig (mestre) with Items collection
         services.AddOptions<ListImportConfig>()
@@ -113,13 +110,11 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<ParallelImportConfig>(sp =>
             sp.GetRequiredService<IOptionsSnapshot<ParallelImportConfig>>().Value);
 
-        // ============= IMPORT CONSUMER & ORCHESTRATOR =============
-        services.AddSingleton<IListImportConsumer, ListImportConsumer>();
+        // ============= IMPORT ORCHESTRATOR =============
         services.AddSingleton<IListImportOrchestrator, ListImportOrchestrator>();
 
         // ============= PARTITION KEY STRATEGY & LIST TABLE PROVIDER =============
-        
-        
+
 
         // ============= STORAGE REPOSITORIES =============
         services.AddSingleton<IListTableStorageRepository, ListTableStorageRepository>();

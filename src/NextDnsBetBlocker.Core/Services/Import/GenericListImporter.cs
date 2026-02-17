@@ -7,7 +7,12 @@ using System.Security.Cryptography;
 
 /// <summary>
 /// Importador genérico para qualquer lista de domínios
-/// Coordena todo o processo de importação e diffs
+/// Responsabilidades:
+/// 1. Baixar domínios das fontes (URLs)
+/// 2. Fazer diffs se necessário
+/// 3. Chamar orchestrator para inserção paralela
+/// 4. Persistir arquivo no blob
+/// 
 /// Reutilizável para múltiplas fontes (Tranco, Hagezi, etc)
 /// </summary>
 public class GenericListImporter : IListImporter
@@ -31,7 +36,7 @@ public class GenericListImporter : IListImporter
 
     /// <summary>
     /// Executa importação completa de uma lista
-    /// Lida com streaming, batching, rate limiting, resiliência
+    /// Baixa dados da origem, delega inserção ao orchestrator
     /// Persiste arquivo no blob após sucesso
     /// </summary>
     public async Task<ImportMetrics> ImportAsync(
@@ -42,17 +47,36 @@ public class GenericListImporter : IListImporter
         try
         {
             _logger.LogInformation(
-                "Starting full import for {ListName} from {SourceUrl}",
+                "Starting full import for {ListName} from {SourceCount} sources",
                 config.ListName,
-                config.SourceUrl);
+                config.SourceUrl.Length);
 
-            // Executar importação
-            var metrics = await _orchestrator.ExecuteImportAsync(config, progress, cancellationToken);
+            // 1. Baixar dados de todas as fontes
+            var domains = await DownloadAndParseAsync(config.SourceUrl, cancellationToken);
+            _logger.LogInformation("Downloaded {Count:N0} domains from all sources", domains.Count);
 
-            // Se bem-sucedido, salvar arquivo no blob
+            // 2. Chamar orchestrator para inserção paralela
+            var metrics = await _orchestrator.ExecuteImportAsync(
+                config,
+                ImportOperationType.Add,
+                domains,
+                progress,
+                cancellationToken);
+
+            // 3. Se bem-sucedido, salvar arquivo no blob como referência
             if (metrics.TotalErrors == 0)
             {
-                await SaveImportedFileAsync(config, cancellationToken);
+                await SaveImportedFileAsync(config, domains, cancellationToken);
+                _logger.LogInformation(
+                    "✓ Full import completed and file saved to blob for {ListName}",
+                    config.ListName);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Full import completed with errors for {ListName}: {Errors} errors",
+                    config.ListName,
+                    metrics.TotalErrors);
             }
 
             return metrics;
@@ -66,7 +90,7 @@ public class GenericListImporter : IListImporter
 
     /// <summary>
     /// Executa diff entre arquivo anterior e novo
-    /// Insere apenas mudanças (adds/removes)
+    /// Insere apenas mudanças (adds/removes) em paralelo
     /// Mais eficiente que re-importar tudo (reduz I/O 95%)
     /// </summary>
     public async Task<ImportMetrics> ImportDiffAsync(
@@ -77,59 +101,80 @@ public class GenericListImporter : IListImporter
         try
         {
             _logger.LogInformation(
-                "Starting diff import for {ListName} from {SourceUrl}",
+                "Starting diff import for {ListName} from {SourceCount} sources",
                 config.ListName,
-                string.Join(", ", config.SourceUrl));
+                config.SourceUrl.Length);
 
-            var metrics = new ImportMetrics();
-
-            // 1. Baixar arquivo novo do servidor (usar primeira URL para diff)
-            var sourceUrl = config.SourceUrl.FirstOrDefault();
-            if (string.IsNullOrEmpty(sourceUrl))
-            {
-                throw new InvalidOperationException($"No source URLs configured for {config.ListName}");
-            }
-
-            _logger.LogInformation("Downloading new list from {SourceUrl}", sourceUrl);
-            var newDomains = await DownloadAndParseAsync(sourceUrl, cancellationToken);
-            _logger.LogInformation("Downloaded {Count} domains", newDomains.Count);
+            // 1. Baixar dados novo do servidor
+            _logger.LogInformation("Downloading new list from sources");
+            var newDomains = await DownloadAndParseAsync(config.SourceUrl, cancellationToken);
+            _logger.LogInformation("Downloaded {Count:N0} domains", newDomains.Count);
 
             // 2. Recuperar arquivo anterior do blob
             _logger.LogInformation("Retrieving previous list from blob storage");
             var previousDomains = await GetPreviousDomainsAsync(config, cancellationToken);
-            _logger.LogInformation("Retrieved {Count} previous domains", previousDomains.Count);
+            _logger.LogInformation("Retrieved {Count:N0} previous domains", previousDomains.Count);
 
-            // 3. Calcular diff em memória (você tem 64GB)
+            // 3. Calcular diff em memória
             var adds = newDomains.Except(previousDomains).ToHashSet();
             var removes = previousDomains.Except(newDomains).ToHashSet();
 
             _logger.LogInformation(
-                "Diff calculated for {ListName}: +{Adds} adds, -{Removes} removes",
-                config.ListName, adds.Count, removes.Count);
+                "Diff calculated for {ListName}: +{Adds:N0} adds, -{Removes:N0} removes",
+                config.ListName,
+                adds.Count,
+                removes.Count);
 
-            // 4. Aplicar mudanças
-            if (adds.Count > 0)
+            // 4. Executar operações em paralelo
+            var addTask = (adds.Count > 0)
+                ? _orchestrator.ExecuteImportAsync(
+                    config,
+                    ImportOperationType.Add,
+                    adds,
+                    progress,
+                    cancellationToken)
+                : Task.FromResult(new ImportMetrics
+                {
+                    Status = ImportStatus.Completed,
+                    TotalProcessed = 0,
+                    TotalInserted = 0,
+                    TotalErrors = 0
+                });
+
+            var removeTask = (removes.Count > 0)
+                ? _orchestrator.ExecuteImportAsync(
+                    config,
+                    ImportOperationType.Remove,
+                    removes,
+                    progress,
+                    cancellationToken)
+                : Task.FromResult(new ImportMetrics
+                {
+                    Status = ImportStatus.Completed,
+                    TotalProcessed = 0,
+                    TotalInserted = 0,
+                    TotalErrors = 0
+                });
+
+            var results = await Task.WhenAll(addTask, removeTask);
+
+            // 5. Agregar métricas
+            var metrics = new ImportMetrics
             {
-                var addMetrics = await ApplyAddsAsync(config, adds, progress, cancellationToken);
-                metrics.TotalInserted += addMetrics.TotalInserted;
-                metrics.TotalErrors += addMetrics.TotalErrors;
-            }
+                TotalProcessed = results.Sum(r => r.TotalProcessed),
+                TotalInserted = results.Sum(r => r.TotalInserted),
+                TotalErrors = results.Sum(r => r.TotalErrors),
+                Status = results.All(r => r.Status == ImportStatus.Completed) 
+                    ? ImportStatus.Completed 
+                    : ImportStatus.Failed,
+                ElapsedTime = TimeSpan.FromMilliseconds(results.Max(r => r.ElapsedTime.TotalMilliseconds))
+            };
 
-            if (removes.Count > 0)
-            {
-                var removeMetrics = await ApplyRemovesAsync(config, removes, progress, cancellationToken);
-                metrics.TotalInserted += removeMetrics.TotalInserted;
-                metrics.TotalErrors += removeMetrics.TotalErrors;
-            }
-
-            // 5. Salvar novo arquivo como referência para próximo diff
+            // 6. Salvar novo arquivo como referência para próximo diff
             await SaveImportedFileAsync(config, newDomains, cancellationToken);
 
-            metrics.TotalProcessed = adds.Count + removes.Count;
-            metrics.Status = metrics.TotalErrors == 0 ? ImportStatus.Completed : ImportStatus.Failed;
-
             _logger.LogInformation(
-                "Diff import completed for {ListName}: +{Adds}, -{Removes}, Errors={Errors}",
+                "✓ Diff import completed for {ListName}: +{Adds:N0} adds, -{Removes:N0} removes | Errors: {Errors}",
                 config.ListName,
                 adds.Count,
                 removes.Count,
@@ -138,8 +183,9 @@ public class GenericListImporter : IListImporter
             progress.Report(new ImportProgress { Metrics = metrics });
             return metrics;
         }
-        catch (NotImplementedException)
+        catch (OperationCanceledException)
         {
+            _logger.LogInformation("Diff import cancelled for {ListName}", config.ListName);
             throw;
         }
         catch (Exception ex)
@@ -149,16 +195,65 @@ public class GenericListImporter : IListImporter
         }
     }
 
+    /// <summary>
+    /// Baixar e fazer parse de domínios de múltiplas fontes
+    /// Suporta URLs HTTP/HTTPS
+    /// Merge automático de múltiplas fontes
+    /// </summary>
     private async Task<HashSet<string>> DownloadAndParseAsync(
+        string[] sourceUrls,
+        CancellationToken cancellationToken)
+    {
+        var allDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var sourceUrl in sourceUrls)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (string.IsNullOrWhiteSpace(sourceUrl))
+            {
+                _logger.LogWarning("Empty source URL, skipping");
+                continue;
+            }
+
+            try
+            {
+                _logger.LogInformation("Downloading from {SourceUrl}", sourceUrl);
+                var domainsParsed = await DownloadAndParseFromSourceAsync(sourceUrl, cancellationToken);
+                allDomains.UnionWith(domainsParsed);
+                _logger.LogInformation("Parsed {Count:N0} domains from {SourceUrl}", domainsParsed.Count, sourceUrl);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to download from {SourceUrl}, continuing with other sources", sourceUrl);
+                // Continuar com próxima fonte ao invés de falhar completamente
+            }
+        }
+
+        if (allDomains.Count == 0)
+        {
+            throw new InvalidOperationException($"No domains downloaded from any source");
+        }
+
+        return allDomains;
+    }
+
+    /// <summary>
+    /// Baixar e fazer parse de uma única fonte com retry automático
+    /// </summary>
+    private async Task<HashSet<string>> DownloadAndParseFromSourceAsync(
         string sourceUrl,
         CancellationToken cancellationToken)
     {
         var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        const int maxRetries = 3;
+        int attempt = 0;
 
-        using (var httpClient = new HttpClient())
+        while (attempt < maxRetries)
         {
             try
             {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
                 var content = await httpClient.GetStringAsync(sourceUrl, cancellationToken);
 
                 // Parse domínios
@@ -166,11 +261,12 @@ public class GenericListImporter : IListImporter
                 {
                     var trimmed = line.Trim();
 
+                    // Ignorar linhas vazias e comentários
                     if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("#"))
                         continue;
 
                     // Suportar formatos: "domínio" ou "rank,domínio" (Tranco)
-                    var domain = trimmed.Contains(',') 
+                    var domain = trimmed.Contains(',')
                         ? trimmed.Split(',')[1].Trim()
                         : trimmed;
 
@@ -180,14 +276,26 @@ public class GenericListImporter : IListImporter
                     }
                 }
 
-                return domains;
+                return domains; // Sucesso
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to download and parse from {SourceUrl}", sourceUrl);
-                throw;
+                attempt++;
+                if (attempt >= maxRetries)
+                {
+                    _logger.LogError(ex, "Failed to download from {SourceUrl} after {MaxRetries} attempts", sourceUrl, maxRetries);
+                    throw;
+                }
+
+                // Aguardar antes de retry (backoff exponencial)
+                var delayMs = (int)(1000 * Math.Pow(2, attempt - 1)); // 1s, 2s, 4s
+                _logger.LogWarning(ex, "Download attempt {Attempt}/{MaxRetries} failed for {SourceUrl}, retrying in {DelayMs}ms", 
+                    attempt, maxRetries, sourceUrl, delayMs);
+                await Task.Delay(delayMs, cancellationToken);
             }
         }
+
+        throw new InvalidOperationException($"Failed to download from {sourceUrl}");
     }
 
     private async Task<HashSet<string>> GetPreviousDomainsAsync(
@@ -256,118 +364,24 @@ public class GenericListImporter : IListImporter
         }
     }
 
-    private async Task<ImportMetrics> ApplyAddsAsync(
-        ListImportItemConfig config,
-        HashSet<string> adds,
-        IProgress<ImportProgress> progress,
-        CancellationToken cancellationToken)
-    {
-        var metrics = new ImportMetrics();
-
-        try
-        {
-            _logger.LogInformation("Applying {Count} adds to {TableName}", adds.Count, config.TableName);
-
-            var processed = 0;
-            foreach (var chunk in adds.Chunk(config.BatchSize))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var entries = chunk
-                    .Select(domain => new DomainListEntry
-                    {
-                        PartitionKey = GetPartitionKey(domain),
-                        RowKey = domain
-                    })
-                    .ToList();
-
-                var result = await _tableRepository.UpsertBatchAsync(
-                    config.TableName,
-                    entries,
-                    cancellationToken);
-
-                metrics.TotalInserted += result.SuccessCount;
-                metrics.TotalErrors += result.FailureCount;
-                processed += chunk.Length;
-
-                if (processed % 1000 == 0)
-                {
-                    _logger.LogDebug("Applied {Processed}/{Total} adds", processed, adds.Count);
-                    progress.Report(new ImportProgress { Metrics = metrics });
-                }
-            }
-
-            return metrics;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to apply adds");
-            throw;
-        }
-    }
-
-    private async Task<ImportMetrics> ApplyRemovesAsync(
-        ListImportItemConfig config,
-        HashSet<string> removes,
-        IProgress<ImportProgress> progress,
-        CancellationToken cancellationToken)
-    {
-        var metrics = new ImportMetrics();
-
-        try
-        {
-            _logger.LogInformation("Applying {Count} removes from {TableName}", removes.Count, config.TableName);
-
-            var processed = 0;
-            foreach (var chunk in removes.Chunk(config.BatchSize))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var entries = chunk
-                    .Select(domain => new DomainListEntry
-                    {
-                        PartitionKey = GetPartitionKey(domain),
-                        RowKey = domain
-                    })
-                    .ToList();
-
-                var result = await _tableRepository.DeleteBatchAsync(
-                    config.TableName,
-                    entries,
-                    cancellationToken);
-
-                metrics.TotalInserted += result.SuccessCount;
-                metrics.TotalErrors += result.FailureCount;
-                processed += chunk.Length;
-
-                if (processed % 1000 == 0)
-                {
-                    _logger.LogDebug("Applied {Processed}/{Total} removes", processed, removes.Count);
-                    progress.Report(new ImportProgress { Metrics = metrics });
-                }
-            }
-
-            return metrics;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to apply removes");
-            throw;
-        }
-    }
-
+    /// <summary>
+    /// Salvar arquivo no blob como referência para próximo diff
+    /// Arquivo é simplesmente uma lista de domínios ordenados, um por linha
+    /// Agnóstico à origem (não sabe se veio de download, diff merge, etc)
+    /// </summary>
     private async Task SaveImportedFileAsync(
         ListImportItemConfig config,
-        HashSet<string> newDomains,
+        HashSet<string> finalDomains,
         CancellationToken cancellationToken)
     {
         try
         {
             _logger.LogInformation("Saving imported file for {ListName}", config.ListName);
 
-            // Converter HashSet para stream para salvar no blob
-            var csvContent = string.Join("\n", newDomains.OrderBy(x => x));
-            var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csvContent));
+            // Converter HashSet para arquivo ordenado
+            var csvContent = string.Join("\n", finalDomains.OrderBy(x => x));
+            var contentBytes = System.Text.Encoding.UTF8.GetBytes(csvContent);
+            var stream = new MemoryStream(contentBytes);
 
             // Salvar como referência para próximo diff
             var blobName = $"{config.ListName.ToLowerInvariant()}/previous";
@@ -382,7 +396,7 @@ public class GenericListImporter : IListImporter
             {
                 ListName = config.ListName,
                 FileHash = GenerateSha256Hash(csvContent),
-                RecordCount = newDomains.Count,
+                RecordCount = finalDomains.Count,
                 FileSizeBytes = stream.Length,
                 SourceVersion = DateTime.UtcNow.ToString("O")
             };
@@ -395,74 +409,25 @@ public class GenericListImporter : IListImporter
                 cancellationToken);
 
             _logger.LogInformation(
-                "Imported file metadata saved for {ListName}: {Count} records, {Size} bytes",
+                "✓ Imported file saved for {ListName}: {Count:N0} records, {Size:N0} bytes",
                 config.ListName,
-                newDomains.Count,
+                finalDomains.Count,
                 stream.Length);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to save imported file metadata for {ListName}", config.ListName);
-            // Não lançar exceção - importação foi bem-sucedida
-        }
-    }
-
-    private string GetPartitionKey(string domain)
-    {
-        // Usar estratégia injetada do container (será registrada em Program.cs)
-        // Por enquanto, criar uma instância simples
-        var strategy = new PartitionKeyStrategy(10);
-        return strategy.GetPartitionKey(domain);
-    }
-
-    private static string GenerateSha256Hash(string input)
-    {
-        using (var sha256 = SHA256.Create())
-        {
-            var hashedBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
-            return Convert.ToHexString(hashedBytes);
-        }
-    }
-
-    private async Task SaveImportedFileAsync(ListImportItemConfig config, CancellationToken cancellationToken)
-    {
-        try
-        {
-            _logger.LogInformation(
-                "Saving imported file metadata for {ListName}",
-                config.ListName);
-
-            var metadata = new ImportedListMetadata
-            {
-                ListName = config.ListName,
-                FileHash = GenerateRandomHash(), // TODO: Usar hash real do arquivo
-                RecordCount = 0, // TODO: Usar contagem real
-                FileSizeBytes = 0, // TODO: Usar tamanho real
-                SourceVersion = "1.0" // TODO: Extrair de metadados da origem
-            };
-
-            var blobName = $"{config.ListName.ToLowerInvariant()}/latest";
-            var metadataName = $"{config.ListName.ToLowerInvariant()}/metadata.json";
-
-            await _blobRepository.SaveImportMetadataAsync(
-                config.BlobContainer,
-                metadataName,
-                metadata,
-                cancellationToken);
-
-            _logger.LogInformation(
-                "Imported file metadata saved for {ListName}",
-                config.ListName);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to save imported file metadata for {ListName}", config.ListName);
+            _logger.LogWarning(ex, "Failed to save imported file for {ListName}", config.ListName);
             // Não lançar exceção - importação foi bem-sucedida, salvamento de backup é secundário
         }
     }
 
-    private static string GenerateRandomHash()
+    /// <summary>
+    /// Gerar hash SHA256 de um conteúdo para validação
+    /// </summary>
+    private static string GenerateSha256Hash(string input)
     {
-        return Guid.NewGuid().ToString("N")[..16];
+        using var sha256 = SHA256.Create();
+        var hashedBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hashedBytes);
     }
 }

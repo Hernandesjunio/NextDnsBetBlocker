@@ -1,7 +1,6 @@
 namespace NextDnsBetBlocker.Core.Interfaces;
 
 using NextDnsBetBlocker.Core.Models;
-using System.Threading.Channels;
 
 /// <summary>
 /// Estratégia para gerar partition key baseado em domínio
@@ -22,47 +21,34 @@ public interface IPartitionKeyStrategy
 }
 
 /// <summary>
-/// Produtor de dados da origem (arquivo/URL/blob)
-/// Responsável por ler e enfileirar dados
-/// </summary>
-public interface IListImportProducer
-{
-    /// <summary>
-    /// Lê dados da origem e escreve no channel
-    /// Processa em streaming sem carregar tudo em memória
-    /// </summary>
-    Task ProduceAsync(
-        Channel<string> outputChannel,
-        ListImportItemConfig config,
-        CancellationToken cancellationToken);
-}
-
-/// <summary>
-/// Consumidor de dados para Table Storage
-/// Responsável por batch, rate limiting e inserção
-/// </summary>
-public interface IListImportConsumer
-{
-    /// <summary>
-    /// Lê do channel, faz batch e insere em Table Storage
-    /// Aplica rate limiting e resiliência
-    /// </summary>
-    Task ConsumeAsync(
-        Channel<string> inputChannel,
-        ListImportItemConfig config,
-        IProgress<ImportProgress> progress,
-        CancellationToken cancellationToken);
-}
-
-/// <summary>
 /// Orquestrador da importação
-/// Coordena produtor e consumidor
+/// Coordena processamento e inserção paralela de domínios
+/// Executa operações de Add (Upsert) ou Remove (Delete) em paralelo
 /// </summary>
 public interface IListImportOrchestrator
 {
     /// <summary>
-    /// Executa a importação completa (produtor + consumidor)
+    /// Executa operação de importação com domínios já baixados
+    /// Responsável por paralelização, batching, rate limiting e resiliência
     /// </summary>
+    /// <param name="config">Configuração da lista a ser importada</param>
+    /// <param name="operationType">Tipo de operação (Add/Upsert ou Remove/Delete)</param>
+    /// <param name="domains">Domínios já baixados/processados (não faz download)</param>
+    /// <param name="progress">Reporter de progresso em tempo real</param>
+    /// <param name="cancellationToken">Token para cancelamento</param>
+    /// <returns>Métricas finais da importação</returns>
+    Task<ImportMetrics> ExecuteImportAsync(
+        ListImportItemConfig config,
+        ImportOperationType operationType,
+        IEnumerable<string> domains,
+        IProgress<ImportProgress> progress,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// [OBSOLETE] Executa importação com produtor integrado (deprecated)
+    /// Use a nova sobrecarga que passa domínios já baixados
+    /// </summary>
+    [Obsolete("Use ExecuteImportAsync(config, operationType, domains, progress, cancellationToken) instead", true)]
     Task<ImportMetrics> ExecuteImportAsync(
         ListImportItemConfig config,
         IProgress<ImportProgress> progress,
