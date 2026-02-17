@@ -28,8 +28,7 @@ public class ListImportOrchestratorTests
 
         _parallelConfig = new ParallelImportConfig
         {
-            MaxDegreeOfParallelism = 4,
-            BatchSize = 100
+            MaxDegreeOfParallelism = 4
         };
 
         _mockPartitionKeyStrategy
@@ -85,8 +84,7 @@ public class ListImportOrchestratorTests
             BatchId = "batch-1",
             ItemCount = 3,
             SuccessCount = 3,
-            FailureCount = 0,
-            IsSuccess = true
+            FailureCount = 0
         };
 
         _mockTableRepository
@@ -139,8 +137,7 @@ public class ListImportOrchestratorTests
             BatchId = "batch-1",
             ItemCount = 2,
             SuccessCount = 2,
-            FailureCount = 0,
-            IsSuccess = true
+            FailureCount = 0
         };
 
         _mockTableRepository
@@ -193,8 +190,7 @@ public class ListImportOrchestratorTests
             BatchId = "batch-1",
             ItemCount = 3,
             SuccessCount = 3,
-            FailureCount = 0,
-            IsSuccess = true
+            FailureCount = 0
         };
 
         _mockTableRepository
@@ -249,8 +245,7 @@ public class ListImportOrchestratorTests
             BatchId = "batch-1",
             ItemCount = 2,
             SuccessCount = 2,
-            FailureCount = 0,
-            IsSuccess = true
+            FailureCount = 0
         };
 
         _mockTableRepository
@@ -326,8 +321,7 @@ public class ListImportOrchestratorTests
             BatchId = "batch-1",
             ItemCount = 1,
             SuccessCount = 1,
-            FailureCount = 0,
-            IsSuccess = true
+            FailureCount = 0
         };
 
         _mockTableRepository
@@ -354,23 +348,4 @@ public class ListImportOrchestratorTests
         progressUpdates.Last().Metrics.Status.Should().Be(ImportStatus.Completed);
     }
 
-    [Fact]
-    public void ExecuteImportAsync_ObsoleteOverload_ThrowsNotSupportedException()
-    {
-        // Arrange
-        var config = new ListImportItemConfig
-        {
-            ListName = "TestList",
-            SourceUrl = new[] { "http://example.com/list.txt" },
-            TableName = "TestTable",
-            BlobContainer = "test-container"
-        };
-
-        var progress = new Progress<ImportProgress>();
-        var cts = new CancellationTokenSource();
-
-        // Act & Assert
-        Assert.ThrowsAsync<NotSupportedException>(
-            () => _orchestrator.ExecuteImportAsync(config, progress, cts.Token));
     }
-}
