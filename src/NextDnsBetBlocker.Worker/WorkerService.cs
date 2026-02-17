@@ -25,21 +25,9 @@ public class WorkerService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Worker service starting");
-
-        // Initial HaGeZi refresh
-        try
-        {
-            await _pipeline.UpdateHageziAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to refresh HaGeZi on startup");
-        }
-
+               
         // Run processing and HaGeZi update tasks concurrently
-        var processingTask = ProcessLogsPeriodicAsync(stoppingToken);
-        var hageziTask = UpdateHageziPeriodicAsync(stoppingToken);
-        await Task.WhenAll(processingTask, hageziTask);
+        await ProcessLogsPeriodicAsync(stoppingToken);                
     }
 
     // Cada task com seu próprio timer
@@ -72,6 +60,7 @@ public class WorkerService : BackgroundService
         }
     }
 
+    [Obsolete("This method is deprecated. The HaGeZi list is now updated automatically on a daily schedule. Manual refresh is no longer necessary.", true)]
     private async Task UpdateHageziPeriodicAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromHours(_settings.HageziRefreshIntervalHours));

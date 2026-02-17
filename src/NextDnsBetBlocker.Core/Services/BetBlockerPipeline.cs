@@ -96,6 +96,7 @@ public class BetBlockerPipeline : IBetBlockerPipeline
         return stats;
     }
 
+    [Obsolete("This method is deprecated. The HaGeZi list is now updated automatically on a daily schedule. Manual refresh is no longer necessary.", true)]
     public async Task UpdateHageziAsync()
     {
         try

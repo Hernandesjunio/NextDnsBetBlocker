@@ -38,6 +38,7 @@ public class HageziProvider : IHageziProvider
         IOptions<HageziProviderConfig> options)
     {
         var containerClient = blobServiceClient.GetBlobContainerClient(ContainerName);
+        containerClient.CreateIfNotExists();
         _containerClient = containerClient;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -76,6 +77,7 @@ public class HageziProvider : IHageziProvider
         return _gamblingDomains;
     }
 
+    [Obsolete("Use RefreshAsync instead for better error handling and logging", true)]
     public async Task RefreshAsync()
     {
         try

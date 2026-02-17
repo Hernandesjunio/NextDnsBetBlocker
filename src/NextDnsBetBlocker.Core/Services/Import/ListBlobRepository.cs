@@ -26,6 +26,7 @@ public class ListBlobRepository : IListBlobRepository
 
         var blobServiceClient = new BlobServiceClient(options.Value.AzureStorageConnectionString);
         _containerClient = blobServiceClient.GetBlobContainerClient(ContainerName);
+        _containerClient.CreateIfNotExists();
     }
 
     public async Task<string> SaveImportFileAsync(
@@ -148,7 +149,7 @@ public class ListBlobRepository : IListBlobRepository
             _logger.LogInformation("Retrieving import metadata from blob: {MetadataName}", metadataName);
 
             var blobClient = _containerClient.GetBlobClient(metadataName);
-
+            
             // Verificar se existe
             var exists = await blobClient.ExistsAsync(cancellationToken);
             if (!exists.Value)

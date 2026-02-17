@@ -69,6 +69,7 @@ public interface IHageziProvider
     /// <summary>
     /// Refreshes the HaGeZi list (called daily)
     /// </summary>
+    [Obsolete("This method is deprecated. The HaGeZi list is now updated automatically on a daily schedule. Manual refresh is no longer necessary.", true)]
     Task RefreshAsync();
 }
 
@@ -134,6 +135,7 @@ public interface ITrancoAllowlistProvider
     /// Force refresh Tranco List from URL
     /// Executa diff import (apenas mudanças)
     /// </summary>
+    [Obsolete("This method is deprecated. The Tranco List is now updated automatically on a daily schedule. Manual refresh is no longer necessary.", true)]
     Task RefreshAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -166,6 +168,7 @@ public interface IBetBlockerPipeline
     /// <summary>
     /// Updates the HaGeZi gambling list
     /// </summary>
+    [Obsolete("This method is deprecated. The HaGeZi list is now updated automatically on a daily schedule. Manual update is no longer necessary.", true)]
     Task UpdateHageziAsync();
 }
 
