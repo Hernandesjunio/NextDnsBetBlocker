@@ -37,7 +37,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
     /// Coordena produtor e consumidor em paralelo usando channel
     /// </summary>
     public async Task<ImportMetrics> ExecuteImportAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken)
     {

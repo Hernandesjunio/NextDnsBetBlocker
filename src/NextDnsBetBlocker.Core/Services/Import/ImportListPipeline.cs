@@ -12,12 +12,12 @@ using NextDnsBetBlocker.Core.Models;
 public class ImportListPipeline
 {
     private readonly ILogger<ImportListPipeline> _logger;
-    private readonly IEnumerable<ListImportConfig> _configs;
+    private readonly IEnumerable<ListImportItemConfig> _configs;
     private readonly IListImporter listImporter;
 
     public ImportListPipeline(
         ILogger<ImportListPipeline> logger,
-        IEnumerable<ListImportConfig> configs,
+        IEnumerable<ListImportItemConfig> configs,
         IListImporter listImporter)
     {
         _logger = logger;
@@ -108,7 +108,7 @@ public class ImportListPipeline
     /// Importar uma lista específica com checkpoint tracking
     /// </summary>
     private async Task<ListImportResult> ImportListAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         CancellationToken cancellationToken)
     {
         var result = new ListImportResult();

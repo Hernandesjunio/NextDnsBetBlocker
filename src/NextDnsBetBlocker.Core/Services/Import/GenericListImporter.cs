@@ -35,7 +35,7 @@ public class GenericListImporter : IListImporter
     /// Persiste arquivo no blob após sucesso
     /// </summary>
     public async Task<ImportMetrics> ImportAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken)
     {
@@ -70,7 +70,7 @@ public class GenericListImporter : IListImporter
     /// Mais eficiente que re-importar tudo (reduz I/O 95%)
     /// </summary>
     public async Task<ImportMetrics> ImportDiffAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken)
     {
@@ -191,7 +191,7 @@ public class GenericListImporter : IListImporter
     }
 
     private async Task<HashSet<string>> GetPreviousDomainsAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         CancellationToken cancellationToken)
     {
         var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -257,7 +257,7 @@ public class GenericListImporter : IListImporter
     }
 
     private async Task<ImportMetrics> ApplyAddsAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         HashSet<string> adds,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken)
@@ -307,7 +307,7 @@ public class GenericListImporter : IListImporter
     }
 
     private async Task<ImportMetrics> ApplyRemovesAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         HashSet<string> removes,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken)
@@ -357,7 +357,7 @@ public class GenericListImporter : IListImporter
     }
 
     private async Task SaveImportedFileAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         HashSet<string> newDomains,
         CancellationToken cancellationToken)
     {
@@ -424,7 +424,7 @@ public class GenericListImporter : IListImporter
         }
     }
 
-    private async Task SaveImportedFileAsync(ListImportConfig config, CancellationToken cancellationToken)
+    private async Task SaveImportedFileAsync(ListImportItemConfig config, CancellationToken cancellationToken)
     {
         try
         {

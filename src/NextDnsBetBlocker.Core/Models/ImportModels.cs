@@ -1,22 +1,40 @@
 namespace NextDnsBetBlocker.Core.Models;
 
 /// <summary>
-/// Configuração para importação de listas de domínios
+/// Configuração mestre para importação de listas
+/// Contém configurações globais (connection string)
 /// </summary>
 public class ListImportConfig
 {
     /// <summary>
-    /// String de conexão
+    /// String de conexão global (Table Storage + Blob Storage)
     /// </summary>
-    public string AzureStorageConnectionString { get; set; } = string.Empty;
+    public required string AzureStorageConnectionString { get; set; }
 
     /// <summary>
-    /// Nome da lista (ex: TrancoList, HageziList)
+    /// Coleção de configurações por item
+    /// </summary>
+    public required ListImportItemConfig[] Items { get; set; }
+}
+
+/// <summary>
+/// Configuração por item de importação
+/// Específico para cada lista (Tranco, HageziGambling, etc)
+/// </summary>
+public class ListImportItemConfig
+{
+    /// <summary>
+    /// Se esta lista está habilitada
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Nome da lista (ex: TrancoList, HageziGambling)
     /// </summary>
     public required string ListName { get; set; }
 
     /// <summary>
-    /// URL ou caminho da fonte de dados
+    /// URLs ou caminhos das fontes de dados
     /// </summary>
     public required string[] SourceUrl { get; set; }
 

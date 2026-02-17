@@ -21,7 +21,7 @@ public class ListTableStorageRepository : IListTableStorageRepository
     private const int MaxBatchSize = 100; // Limite do Table Storage
 
     public ListTableStorageRepository(
-        IOptions<WorkerSettings> options,
+        IOptions<ListImportConfig> options,
         ILogger<ListTableStorageRepository> logger)
     {
         _logger = logger;

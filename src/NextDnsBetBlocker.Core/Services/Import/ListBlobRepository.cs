@@ -19,7 +19,7 @@ public class ListBlobRepository : IListBlobRepository
     private const string ContainerName = "tranco-lists";
 
     public ListBlobRepository(
-        IOptions<WorkerSettings> options,
+        IOptions<ListImportConfig> options,
         ILogger<ListBlobRepository> logger)
     {
         _logger = logger;

@@ -47,7 +47,7 @@ public class ListImportConsumer : IListImportConsumer
 
     public async Task ConsumeAsync(
         Channel<string> inputChannel,
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken)
     {

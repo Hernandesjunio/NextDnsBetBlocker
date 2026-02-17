@@ -16,7 +16,7 @@ public class TrancoAllowlistProvider : ITrancoAllowlistProvider
     private readonly IListTableProvider _tableProvider;
     private readonly IListImporter _listImporter;
     private readonly ILogger<TrancoAllowlistProvider> _logger;
-    private readonly ListImportConfig _config;
+    private readonly IEnumerable<ListImportItemConfig> _configs;
 
     private const string TrancoTableName = "TrancoList";
 
@@ -24,12 +24,12 @@ public class TrancoAllowlistProvider : ITrancoAllowlistProvider
         IListTableProvider tableProvider,
         IListImporter listImporter,
         ILogger<TrancoAllowlistProvider> logger,
-        IOptions<ListImportConfig> options)  // ← IOptions (fortemente tipado)
+        IEnumerable<ListImportItemConfig> configs)  // ← Recebe IEnumerable<ListImportItemConfig>
     {
         _tableProvider = tableProvider;
         _listImporter = listImporter;
         _logger = logger;
-        _config = options.Value;  // ← Extrai o valor
+        _configs = configs;
     }
 
     /// <summary>
@@ -54,11 +54,20 @@ public class TrancoAllowlistProvider : ITrancoAllowlistProvider
 
         try
         {
-            // ✅ Usar config injetado ao invés de CreateConfig() estático
+            // ✅ Recuperar config do Tranco List da coleção
+            var config = _configs.FirstOrDefault(c => 
+                c.ListName.Equals("TrancoList", StringComparison.OrdinalIgnoreCase));
+
+            if (config == null)
+            {
+                _logger.LogWarning("TrancoList configuration not found");
+                return;
+            }
+
             var progress = new Progress<ImportProgress>();
 
             // Executar diff import (mais eficiente que full import)
-            var metrics = await _listImporter.ImportDiffAsync(_config, progress, cancellationToken);
+            var metrics = await _listImporter.ImportDiffAsync(config, progress, cancellationToken);
 
             _logger.LogInformation(
                 "Tranco List refreshed: +{Added}, -{Removed}, Errors={Errors}",

@@ -32,7 +32,7 @@ public class ListImportProducer : IListImportProducer
     /// </summary>
     public async Task ProduceAsync(
         Channel<string> outputChannel,
-        ListImportConfig config,
+        ListImportItemConfig config,
         CancellationToken cancellationToken)
     {
         try

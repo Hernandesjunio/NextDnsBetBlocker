@@ -58,6 +58,8 @@ public static class CoreServiceCollectionExtensions
         IServiceCollection services,
         IConfiguration configuration)
     {
+        services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
+        services.AddSingleton<IListTableProvider, ListTableProvider>();
         services.AddSingleton(c => new TableServiceClient(c.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString));
         services.AddSingleton(c => new BlobServiceClient(c.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString));
 
@@ -88,24 +90,16 @@ public static class CoreServiceCollectionExtensions
         services.AddHttpClient<IListImportProducer, ListImportProducer>();
 
         // ============= LIST IMPORT CONFIGS =============
-        // Register all ListImportConfig instances from appsettings
-        services.AddSingleton<IEnumerable<ListImportConfig>>(sp =>
+        // Register ListImportConfig (mestre) with Items collection
+        services.AddOptions<ListImportConfig>()
+            .Bind(configuration.GetSection("ListImport"))
+            .ValidateOnStart();
+
+        // Register IEnumerable<ListImportItemConfig> for consumers
+        services.AddSingleton<IEnumerable<ListImportItemConfig>>(sp =>
         {
-            var configs = new List<ListImportConfig>();
-
-            var trancoConfig = configuration.GetSection("ListImport:TrancoList").Get<ListImportConfig>();
-            if (trancoConfig != null)
-            {
-                configs.Add(trancoConfig);
-            }
-
-            var hageziConfig = configuration.GetSection("ListImport:Hagezi").Get<ListImportConfig>();
-            if (hageziConfig != null)
-            {
-                configs.Add(hageziConfig);
-            }
-
-            return configs;
+            var config = sp.GetRequiredService<IOptions<ListImportConfig>>().Value;
+            return config.Items ?? Array.Empty<ListImportItemConfig>();
         });
 
         // ============= CHECKPOINT STORE =============
@@ -124,8 +118,8 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IListImportOrchestrator, ListImportOrchestrator>();
 
         // ============= PARTITION KEY STRATEGY & LIST TABLE PROVIDER =============
-        services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
-        services.AddSingleton<IListTableProvider, ListTableProvider>();
+        
+        
 
         // ============= STORAGE REPOSITORIES =============
         services.AddSingleton<IListTableStorageRepository, ListTableStorageRepository>();

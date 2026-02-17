@@ -33,7 +33,7 @@ public interface IListImportProducer
     /// </summary>
     Task ProduceAsync(
         Channel<string> outputChannel,
-        ListImportConfig config,
+        ListImportItemConfig config,
         CancellationToken cancellationToken);
 }
 
@@ -49,7 +49,7 @@ public interface IListImportConsumer
     /// </summary>
     Task ConsumeAsync(
         Channel<string> inputChannel,
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken);
 }
@@ -64,7 +64,7 @@ public interface IListImportOrchestrator
     /// Executa a importação completa (produtor + consumidor)
     /// </summary>
     Task<ImportMetrics> ExecuteImportAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken);
 }
@@ -215,7 +215,7 @@ public interface IListImporter
     /// Lida com streaming, batching, rate limiting, resiliência
     /// </summary>
     Task<ImportMetrics> ImportAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken);
 
@@ -225,7 +225,7 @@ public interface IListImporter
     /// Mais eficiente que re-importar tudo
     /// </summary>
     Task<ImportMetrics> ImportDiffAsync(
-        ListImportConfig config,
+        ListImportItemConfig config,
         IProgress<ImportProgress> progress,
         CancellationToken cancellationToken);
 }

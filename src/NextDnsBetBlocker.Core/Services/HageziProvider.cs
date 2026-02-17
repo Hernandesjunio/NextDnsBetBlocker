@@ -24,7 +24,7 @@ public class HageziProvider : IHageziProvider
     // Blob storage paths
     private const string BlobNameAdblock = "hagezi-gambling-adblock.txt";
     private const string BlobNameWildcard = "hagezi-gambling-wildcard.txt";
-    private const string ContainerName = "hagezi-lists";
+    private const string ContainerName = "hagezi-gambling";
 
     /// <summary>
     /// <summary>
