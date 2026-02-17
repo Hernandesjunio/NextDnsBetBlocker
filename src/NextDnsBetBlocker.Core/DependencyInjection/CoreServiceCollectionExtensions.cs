@@ -123,13 +123,17 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IListImportConsumer, ListImportConsumer>();
         services.AddSingleton<IListImportOrchestrator, ListImportOrchestrator>();
 
+        // ============= PARTITION KEY STRATEGY & LIST TABLE PROVIDER =============
+        services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
+        services.AddSingleton<IListTableProvider, ListTableProvider>();
+
         // ============= STORAGE REPOSITORIES =============
         services.AddSingleton<IListTableStorageRepository, ListTableStorageRepository>();
 
         services.AddSingleton<IListBlobRepository, ListBlobRepository>();
 
-        // ============= LIST TABLE PROVIDER (with cache) =============
-        RegisterListTableProvider(services, (sp) => sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString);
+        // ============= TRANCO ALLOW LIST PROVIDER =============
+        services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();
 
         // ============= GENERIC LIST IMPORTER =============
         services.AddSingleton<GenericListImporter>(sp =>
@@ -157,28 +161,6 @@ public static class CoreServiceCollectionExtensions
 
         // Register HageziProvider for Importer layer
         services.AddSingleton<IHageziProvider, HageziProvider>();
-
-
-        // ============= TRANCO ALLOW LIST PROVIDER =============
-        services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();
-    }
-
-    private static void RegisterListTableProvider(IServiceCollection services, Func<IServiceProvider, string> fnConnectionString)
-    {
-        services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
-
-        services.AddSingleton<IListTableProvider>(sp =>
-        {            
-            var tableServiceClient = new TableServiceClient(fnConnectionString.Invoke(sp));
-            var tableClient = tableServiceClient.GetTableClient("TrancoList");
-            var cache = sp.GetRequiredService<IMemoryCache>();
-            var partitionStrategy = sp.GetRequiredService<IPartitionKeyStrategy>();
-            return new ListTableProvider(
-                tableClient,
-                cache,
-                partitionStrategy,
-                sp.GetRequiredService<ILogger<ListTableProvider>>());
-        });
     }
 
     /// <summary>
@@ -205,9 +187,6 @@ public static class CoreServiceCollectionExtensions
         services.AddOptions<HageziProviderConfig>()
             .Bind(configuration.GetSection("HaGeZi"))
             .ValidateOnStart();
-
-
-        RegisterListTableProvider(services, sp => sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString);
 
         // ============= AZURE STORAGE - TABLE CLIENTS =============
         services.AddSingleton<IBlockedDomainStore, BlockedDomainStore>();

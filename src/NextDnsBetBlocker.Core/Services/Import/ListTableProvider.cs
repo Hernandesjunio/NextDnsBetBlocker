@@ -18,16 +18,17 @@ public class ListTableProvider : IListTableProvider
     private readonly IMemoryCache _cache;
     private readonly IPartitionKeyStrategy _partitionKeyStrategy;
     private readonly ILogger<ListTableProvider> _logger;
-    
+
     private readonly TimeSpan _cacheDuration = TimeSpan.FromMinutes(5);
+    private const string TableName = "TrancoList";
 
     public ListTableProvider(
-        TableClient tableClient,
+        TableServiceClient tableServiceClient,
         IMemoryCache cache,
         IPartitionKeyStrategy partitionKeyStrategy,
         ILogger<ListTableProvider> logger)
     {
-        _tableClient = tableClient;
+        _tableClient = tableServiceClient.GetTableClient(TableName);
         _cache = cache;
         _partitionKeyStrategy = partitionKeyStrategy;
         _logger = logger;
