@@ -175,11 +175,11 @@ public static class CoreServiceCollectionExtensions
             .Bind(configuration.GetSection("HaGeZi"))
             .ValidateOnStart();
 
-        // Register HageziProvider for Importer layer (uses "hagezi-lists" container via overloaded constructor)
+        // Register HageziProvider for Importer layer
         services.AddSingleton<IHageziProvider>(sp =>
             new HageziProvider(
                 sp.GetRequiredService<BlobServiceClient>(),
-                "hagezi-lists",
+                "hagezi-list",
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<ILogger<HageziProvider>>(),
                 sp.GetRequiredService<IOptions<HageziProviderConfig>>()));
@@ -249,7 +249,7 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IHageziProvider>(sp =>
             new HageziProvider(
                 sp.GetRequiredService<BlobServiceClient>(),
-                "hagezi-gambling",
+                "hagezi-list",
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<ILogger<HageziProvider>>(),
                 sp.GetRequiredService<IOptions<HageziProviderConfig>>()));

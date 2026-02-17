@@ -27,7 +27,7 @@ public class HageziProvider : IHageziProvider
 
     /// <summary>
     /// Constructor with custom container name
-    /// Used for both Analysis layer ("hagezi-gambling") and Importer layer ("hagezi-lists")
+    /// Both Analysis layer ("hagezi-list") and Importer layer use the same container
     /// </summary>
     public HageziProvider(
         BlobServiceClient blobServiceClient,
