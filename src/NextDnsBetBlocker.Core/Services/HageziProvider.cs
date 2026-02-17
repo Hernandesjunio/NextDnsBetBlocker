@@ -25,6 +25,23 @@ public class HageziProvider : IHageziProvider
     private const string BlobNameAdblock = "hagezi-gambling-adblock.txt";
     private const string BlobNameWildcard = "hagezi-gambling-wildcard.txt";
 
+    /// <summary>
+    /// Constructor with default container name (hagezi-gambling)
+    /// Used for Analysis layer (cloud)
+    /// </summary>
+    public HageziProvider(
+        BlobServiceClient blobServiceClient,
+        IHttpClientFactory httpClientFactory,
+        ILogger<HageziProvider> logger,
+        IOptions<HageziProviderConfig> options)
+        : this(blobServiceClient, "hagezi-gambling", httpClientFactory, logger, options)
+    {
+    }
+
+    /// <summary>
+    /// Constructor with custom container name
+    /// Used for Importer layer (local) with "hagezi-lists"
+    /// </summary>
     public HageziProvider(
         BlobServiceClient blobServiceClient,
         string containerName,
