@@ -177,17 +177,12 @@ public static class CoreServiceCollectionExtensions
 
         // Register HageziProvider for Importer layer
         services.AddSingleton<IHageziProvider>(sp =>
-        {
-            var connString = sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString;
-            var blobServiceClient = new BlobServiceClient(connString);
-            var containerClient = blobServiceClient.GetBlobContainerClient("hagezi-lists");
-
-            return new HageziProvider(
-                containerClient,
+            new HageziProvider(
+                sp.GetRequiredService<BlobServiceClient>(),
+                "hagezi-lists",
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<ILogger<HageziProvider>>(),
-                sp.GetRequiredService<IOptions<HageziProviderConfig>>());
-        });
+                sp.GetRequiredService<IOptions<HageziProviderConfig>>()));
 
 
         // ============= TRANCO ALLOW LIST PROVIDER =============
@@ -251,13 +246,13 @@ public static class CoreServiceCollectionExtensions
 
 
         // ============= BLOB STORAGE FOR HAGEZI =============        
-
         services.AddSingleton<IHageziProvider>(sp =>
             new HageziProvider(
-                sp.GetRequiredService<BlobServiceClient>().GetBlobContainerClient("hagezi-gambling"),
+                sp.GetRequiredService<BlobServiceClient>(),
+                "hagezi-gambling",
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<ILogger<HageziProvider>>(),
-                sp.GetRequiredService<IOptions<HageziProviderConfig>>()));  // ← Injetar IOptions
+                sp.GetRequiredService<IOptions<HageziProviderConfig>>()));
 
         // ============= CLASSIFIER =============
         services.AddSingleton<IBetClassifier, BetClassifier>();

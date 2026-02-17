@@ -26,15 +26,17 @@ public class HageziProvider : IHageziProvider
     private const string BlobNameWildcard = "hagezi-gambling-wildcard.txt";
 
     public HageziProvider(
-        BlobContainerClient containerClient,
+        BlobServiceClient blobServiceClient,
+        string containerName,
         IHttpClientFactory httpClientFactory,
         ILogger<HageziProvider> logger,
         IOptions<HageziProviderConfig> options)  // ← IOptions injetado
     {
+        var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
         _containerClient = containerClient;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
-        
+
         var config = options.Value;
         _adblockUrl = config.AdblockUrl;
         _wildcardUrl = config.WildcardUrl;
@@ -48,9 +50,7 @@ public class HageziProvider : IHageziProvider
 
         _logger.LogInformation(
             "HageziProvider initialized with AdblockUrl: {AdblockUrl}, WildcardUrl: {WildcardUrl}, CacheExpire: {Hours}h",
-            _adblockUrl,
-            _wildcardUrl,
-            _cacheExpireHours);
+            _adblockUrl, _wildcardUrl, _cacheExpireHours);
     }
 
     public async Task<HashSet<string>> GetGamblingDomainsAsync()
