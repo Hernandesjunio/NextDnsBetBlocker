@@ -15,6 +15,9 @@ public class CheckpointStore : ICheckpointStore
     {
         _tableClient = tableClient;
         _logger = logger;
+
+        // Ensure table exists on initialization
+        _tableClient.CreateIfNotExists();
     }
 
     public async Task<DateTime?> GetLastTimestampAsync(string profileId)

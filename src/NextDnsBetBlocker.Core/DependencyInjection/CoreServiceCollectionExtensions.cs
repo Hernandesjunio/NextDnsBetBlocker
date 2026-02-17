@@ -65,16 +65,10 @@ public static class CoreServiceCollectionExtensions
         services.AddMemoryCache();
 
         // ============= CHECKPOINT STORE (Shared) =============
-
         services.AddSingleton<ICheckpointStore>(sp =>
-        {
-            var tableServiceClient = sp.GetRequiredService<TableServiceClient>();
-            var checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
-            checkpointTableClient.CreateIfNotExists();
-            return new CheckpointStore(
-                checkpointTableClient,
-                sp.GetRequiredService<ILogger<CheckpointStore>>());
-        });
+            new CheckpointStore(
+                sp.GetRequiredService<TableServiceClient>().GetTableClient("AgentState"),
+                sp.GetRequiredService<ILogger<CheckpointStore>>()));
 
 
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
@@ -250,12 +244,16 @@ public static class CoreServiceCollectionExtensions
         RegisterListTableProvider(services, sp => sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString);
 
         // ============= AZURE STORAGE - TABLE CLIENTS =============
-
         services.AddSingleton<IBlockedDomainStore>(sp =>
-            new BlockedDomainStore(sp.GetRequiredService<TableServiceClient>().GetTableClient("BlockedDomains"), sp.GetRequiredService<ILogger<BlockedDomainStore>>()));
+            new BlockedDomainStore(
+                sp.GetRequiredService<TableServiceClient>().GetTableClient("BlockedDomains"),
+                sp.GetRequiredService<ILogger<BlockedDomainStore>>()));
+
         // ICheckpointStore já é registrado em RegisterSharedServices
         services.AddSingleton<IGamblingSuspectStore>(sp =>
-            new GamblingSuspectStore(sp.GetRequiredService<TableServiceClient>().GetTableClient("GamblingSuspects"), sp.GetRequiredService<ILogger<GamblingSuspectStore>>()));
+            new GamblingSuspectStore(
+                sp.GetRequiredService<TableServiceClient>().GetTableClient("GamblingSuspects"),
+                sp.GetRequiredService<ILogger<GamblingSuspectStore>>()));
 
         // ============= HAGEZI GAMBLING STORE (Table Storage Query) =============
         services.AddSingleton<IHageziGamblingStore>(sp =>
