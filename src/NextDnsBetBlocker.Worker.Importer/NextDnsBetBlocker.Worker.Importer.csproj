@@ -4,10 +4,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <AssemblyName>NextDnsBetBlocker.Worker.Importer</AssemblyName>
-    <RootNamespace>NextDnsBetBlocker.Worker.Importer</RootNamespace>
-    <PublishAot>false</PublishAot>
+    <Nullable>enable</Nullable>    
     <Version>1.0.0</Version>
     <Description>On-demand importer for DNS blocklists (Tranco, HaGeZi). Runs via ACI weekly.</Description>
   </PropertyGroup>
