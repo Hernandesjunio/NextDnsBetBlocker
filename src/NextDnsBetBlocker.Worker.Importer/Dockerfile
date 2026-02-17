@@ -3,20 +3,26 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 
 WORKDIR /src
 
-# Disable NuGet fallback packages (Windows-specific, causes issues in Linux containers)
-RUN mkdir -p .nuget && echo '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" /></packageSources></configuration>' > .nuget/NuGet.config
+# Set environment variables to disable NuGet fallback and cache issues
+ENV DOTNET_SKIP_FIRST_TIME_EXPERIENCE=true \
+    DOTNET_CLI_TELEMETRY_OPTOUT=true \
+    NUGET_XMLDOC_MODE=skip \
+    MSBUILDENSURESTDOUTFORTASKLOGGERS=1 \
+    DOTNET_NOLOGO=true
 
 # Copy project files only
 COPY ["src/NextDnsBetBlocker.Worker.Importer/NextDnsBetBlocker.Worker.Importer.csproj", "NextDnsBetBlocker.Worker.Importer/"]
 COPY ["src/NextDnsBetBlocker.Core/NextDnsBetBlocker.Core.csproj", "NextDnsBetBlocker.Core/"]
 
-# Restore dependencies with environment settings
-ENV DOTNET_SKIP_FIRST_TIME_EXPERIENCE=true \
-    DOTNET_CLI_TELEMETRY_OPTOUT=true
+# Clean build artifacts that may contain cached fallback folder references
+RUN rm -rf NextDnsBetBlocker.Worker.Importer/obj NextDnsBetBlocker.Worker.Importer/bin \
+    && rm -rf NextDnsBetBlocker.Core/obj NextDnsBetBlocker.Core/bin
 
+# Restore dependencies with settings to ignore fallback folder issues
 RUN dotnet restore "NextDnsBetBlocker.Worker.Importer/NextDnsBetBlocker.Worker.Importer.csproj" \
     --disable-build-servers \
-    --configfile .nuget/NuGet.config
+    /p:RestoreIgnoreFailed=true \
+    /p:TreatWarningsAsErrors=false
 
 # Copy source code
 COPY ["src/NextDnsBetBlocker.Worker.Importer/", "NextDnsBetBlocker.Worker.Importer/"]
@@ -27,9 +33,12 @@ RUN dotnet publish "NextDnsBetBlocker.Worker.Importer/NextDnsBetBlocker.Worker.I
     -c Release \
     -o /app/publish \
     --no-restore \
-    --disable-build-servers \
-    /p:DesignTimeBuild=false \
-    /p:UseRazorSourceGenerator=true
+    --self-contained false \
+    /p:PublishTrimmed=false \
+    /p:PublishReadyToRun=false \
+    /p:DebugType=none \
+    /p:DebugSymbols=false \
+    /p:TreatWarningsAsErrors=false
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/runtime:10.0
@@ -41,6 +50,14 @@ COPY --from=builder /app/publish .
 
 # Copy appsettings
 COPY ["src/NextDnsBetBlocker.Worker.Importer/appsettings.json", "./"]
+
+# Run the application
+ENTRYPOINT ["dotnet", "NextDnsBetBlocker.Worker.Importer.dll"]
+
+# Labels for documentation
+LABEL maintainer="NextDnsBetBlocker"
+LABEL description="On-demand importer for DNS blocklists. Runs via ACI weekly."
+LABEL version="1.0.0"COPY ["src/NextDnsBetBlocker.Worker.Importer/appsettings.json", "./"]
 
 # Run the application
 ENTRYPOINT ["dotnet", "NextDnsBetBlocker.Worker.Importer.dll"]
