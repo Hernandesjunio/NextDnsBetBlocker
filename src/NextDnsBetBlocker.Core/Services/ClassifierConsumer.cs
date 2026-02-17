@@ -66,7 +66,7 @@ public class ClassifierConsumer : IClassifierConsumer
                 }
 
                 // Check 2: If in HaGeZi gambling list (known gambling - Table Storage)
-                if (await _hageziGamblingStore.IsGamblingDomainAsync(domain))
+                if (await _hageziGamblingStore.IsGamblingDomainAsync(domain, cancellationToken))
                 {
                     knownGambling++;
                     // Block immediately (já é conhecido como gambling)

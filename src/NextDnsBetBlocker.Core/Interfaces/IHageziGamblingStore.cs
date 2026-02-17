@@ -8,8 +8,9 @@ public interface IHageziGamblingStore
 {
     /// <summary>
     /// Verifica se domínio está na lista de gambling do HaGeZi
+    /// Testa: exato → wildcards em paralelo (*.xxx.casino)
     /// </summary>
-    Task<bool> IsGamblingDomainAsync(string domain);
+    Task<bool> IsGamblingDomainAsync(string domain, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retorna total de domínios gambling armazenados
