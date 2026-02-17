@@ -176,13 +176,7 @@ public static class CoreServiceCollectionExtensions
             .ValidateOnStart();
 
         // Register HageziProvider for Importer layer
-        services.AddSingleton<IHageziProvider>(sp =>
-            new HageziProvider(
-                sp.GetRequiredService<BlobServiceClient>(),
-                "hagezi-list",
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<ILogger<HageziProvider>>(),
-                sp.GetRequiredService<IOptions<HageziProviderConfig>>()));
+        services.AddSingleton<IHageziProvider, HageziProvider>();
 
 
         // ============= TRANCO ALLOW LIST PROVIDER =============
@@ -246,13 +240,7 @@ public static class CoreServiceCollectionExtensions
 
 
         // ============= BLOB STORAGE FOR HAGEZI =============        
-        services.AddSingleton<IHageziProvider>(sp =>
-            new HageziProvider(
-                sp.GetRequiredService<BlobServiceClient>(),
-                "hagezi-list",
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<ILogger<HageziProvider>>(),
-                sp.GetRequiredService<IOptions<HageziProviderConfig>>()));
+        services.AddSingleton<IHageziProvider, HageziProvider>();
 
         // ============= CLASSIFIER =============
         services.AddSingleton<IBetClassifier, BetClassifier>();
