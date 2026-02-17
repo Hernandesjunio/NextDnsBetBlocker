@@ -326,6 +326,15 @@ public class ListTableStorageRepository : IListTableStorageRepository
                         batch.Count,
                         partitionGroup.Key);
                 }
+                catch (Azure.Data.Tables.TableTransactionFailedException ex) when (ex.Status == 404)
+                {
+                    // Entidade não existe na tabela — nada para deletar, tratar como sucesso
+                    result.SuccessCount += batch.Count;
+                    _logger.LogDebug(
+                        "Delete batch skipped for table {TableName} partition {Partition}: entities do not exist (404)",
+                        tableName,
+                        partitionGroup.Key);
+                }
                 catch (Exception ex)
                 {
                     result.FailureCount += batch.Count;

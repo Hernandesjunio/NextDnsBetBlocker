@@ -1,179 +1,261 @@
 namespace NextDnsBetBlocker.Core.Services;
 
 using System.Text.RegularExpressions;
-using NextDnsBetBlocker.Core.Models;
 
-public class GamblingKeywordDetector
+/// <summary>
+/// Detecta keywords de gambling em conteúdo HTML e domínios.
+/// Última linha de defesa — roda apenas em casos raros que passaram por:
+///   1. Tranco Allowlist (sites confiáveis)
+///   2. Hagezi Blocklist (domínios conhecidos)
+///
+/// Foco em PRECISÃO (evitar falsos positivos) sobre RECALL.
+/// </summary>
+public partial class GamblingKeywordDetector
 {
-    // Portuguese gambling keywords and patterns
-    private static readonly HashSet<string> GamblingKeywords = new(StringComparer.OrdinalIgnoreCase)
-    {
-        // Portuguese
-        "aposta", "apostas", "apostador", "apostar", "casino", "cassino", "jogo", "jogos",
-        "jogo de azar", "roleta", "blackjack", "pôquer", "poker", "dados", "máquina caça-níqueis",
-        "caça-níqueis", "bingo", "loteria", "lotérica", "sorteio", "rifa", "raffles",
-        "tigrinho", "fortune tiger", "mines", "crash", "aviator", "bet", "betting", "wager",
-        "stake", "odd", "odds", "jackpot", "bonus", "bônus", "free spin", "spin",
-        "deposit", "depósito", "withdrawal", "saque", "account", "conta", "balance", "saldo",
-        "betslip", "lay bet", "each-way", "parlay", "accumulator", "acumulador",
-        
-        // English
-        "gambling", "gamble", "gambler", "game", "gaming", "luck", "lucky", "fortune",
-        "prize", "prize money", "payout", "win", "winning", "loser", "loss", "luck",
-        "chance", "dice", "cards", "card game", "sport betting", "sports betting",
-        "live betting", "fantasy sports", "esports betting",
-        
-        // Suspicious payment methods
-        "pix bet", "pix betting", "crypto bet", "cripto", "bitcoin", "ethereum",
-        "wire transfer", "transferência", "banco", "conta corrente",
-        
-        // Bonus/promotional patterns
-        "welcome bonus", "bônus de boas-vindas", "promotions", "promoções",
-        "cashback", "free bet", "aposta grátis", "rodada grátis", "giros grátis",
-        
-        // Odds/betting terminology
-        "decimal odds", "fractional odds", "american odds", "implied probability",
-        "moneyline", "spread betting", "over/under", "handicap"
-    };
+    // ══════════════════════════════════════════════════════════════════
+    //  ALTA CONFIANÇA — termos exclusivos de gambling (10 pts cada)
+    //  Removidos: "game", "gaming", "win", "play", "luck", "cards",
+    //  "balance", "deposit", "account", "banco", "saldo", "conta",
+    //  "bitcoin", "pix" — genéricos demais, geram falsos positivos
+    // ══════════════════════════════════════════════════════════════════
+    private static readonly string[] HighConfidenceKeywords =
+    [
+        // Apostas (PT-BR)
+        "aposta", "apostas", "apostador", "apostar",
+        "cassino", "caça-níqueis", "loteria", "lotérica",
+        "tigrinho", "fortune tiger",
 
-    private static readonly HashSet<string> URLPatterns = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "/bet", "/betting", "/casino", "/games", "/gambling", "/play", "/wager",
-        "/odds", "/aposta", "/apostas", "/jogo", "/jogos", "/caça-níqueis"
-    };
+        // Apostas (EN)
+        "gambling", "gamble", "gambler",
+        "betting", "wager", "sportsbook", "bookmaker", "bookie",
 
+        // Casino games
+        "blackjack", "roulette", "roleta",
+        "slot machine", "baccarat", "craps",
+
+        // Apostas esportivas
+        "betslip", "parlay", "accumulator", "acumulador",
+        "handicap", "moneyline", "over/under",
+        "spread betting", "lay bet", "each-way",
+        "live betting", "sports betting", "esports betting",
+
+        // Jogos de azar online populares (BR)
+        "aviator", "crash game", "mines game",
+
+        // Bônus de apostas
+        "free bet", "aposta grátis", "free spin",
+        "rodada grátis", "giros grátis",
+        "welcome bonus", "bônus de boas-vindas"
+    ];
+
+    // ══════════════════════════════════════════════════════════════════
+    //  MÉDIA CONFIANÇA — podem existir em contextos legítimos (3 pts)
+    // ══════════════════════════════════════════════════════════════════
+    private static readonly string[] MediumConfidenceKeywords =
+    [
+        "casino", "poker", "pôquer", "bingo",
+        "jackpot", "odds", "stake", "payout",
+        "cashback", "jogo de azar", "sorteio",
+        "decimal odds", "fractional odds", "american odds",
+        "implied probability"
+    ];
+
+    // Regex compilada com word boundary — evita "bet" casar com "better"
+    private static readonly Regex s_highConfidenceRegex = BuildWordBoundaryRegex(HighConfidenceKeywords);
+    private static readonly Regex s_mediumConfidenceRegex = BuildWordBoundaryRegex(MediumConfidenceKeywords);
+
+    // URL patterns suspeitos
+    private static readonly string[] URLPatterns =
+    [
+        "/bet", "/betting", "/casino", "/gambling",
+        "/wager", "/odds", "/aposta", "/apostas", "/sportsbook"
+    ];
+
+    // Métodos de pagamento específicos de gambling (só contam em combinação)
     private static readonly HashSet<string> PaymentRedFlags = new(StringComparer.OrdinalIgnoreCase)
     {
-        "pix", "crypto", "bitcoin", "ethereum", "usdt", "usdc", "wire transfer",
-        "bank transfer", "western union", "moneygram", "paypal", "skrill", "neteller"
+        "skrill", "neteller" // Processadores usados quase exclusivamente por gambling
     };
 
+    // ══════════════════════════════════════════════════════════════════
+    //  Regex compilados via source generator (.NET 10)
+    // ══════════════════════════════════════════════════════════════════
+    [GeneratedRegex(@"<[^>]+>")]
+    private static partial Regex HtmlTagRegex();
+
+    [GeneratedRegex(@"<input[^>]*name[^>]*(amount|stake|wager|bet)", RegexOptions.IgnoreCase)]
+    private static partial Regex BettingInputRegex();
+
+    [GeneratedRegex(@"<select[^>]*name[^>]*(odds|selection)", RegexOptions.IgnoreCase)]
+    private static partial Regex BettingSelectRegex();
+
+    [GeneratedRegex(@"<button[^>]*>(place bet|apostar|fazer aposta)", RegexOptions.IgnoreCase)]
+    private static partial Regex BettingButtonRegex();
+
+    [GeneratedRegex(@"<form[^>]*(bet|aposta)", RegexOptions.IgnoreCase)]
+    private static partial Regex BettingFormRegex();
+
+    [GeneratedRegex(@"(?:chance|chances)\s+(?:de|to)\s+(?:ganhar|win)", RegexOptions.IgnoreCase)]
+    private static partial Regex LangPatternChanceRegex();
+
+    [GeneratedRegex(@"(?:sua|your)\s+(?:sorte|luck)", RegexOptions.IgnoreCase)]
+    private static partial Regex LangPatternLuckRegex();
+
+    [GeneratedRegex(@"(?:rápido|quick)\s+(?:dinheiro|money)", RegexOptions.IgnoreCase)]
+    private static partial Regex LangPatternMoneyRegex();
+
+    [GeneratedRegex(@"(?:ganhe|earn)\s+(?:agora|now)", RegexOptions.IgnoreCase)]
+    private static partial Regex LangPatternEarnRegex();
+
+    [GeneratedRegex(@"(?:melhor|best)\s+(?:apostas|bets)", RegexOptions.IgnoreCase)]
+    private static partial Regex LangPatternBestBetsRegex();
+
     /// <summary>
-    /// Detect gambling keywords in HTML content
+    /// Detecta keywords de gambling em conteúdo HTML.
+    /// Remove tags HTML antes da análise para evitar falsos positivos de atributos CSS/HTML.
     /// </summary>
     public static (List<string> Keywords, int Score) DetectKeywords(string htmlContent)
     {
         var foundKeywords = new List<string>();
-        var keywordScore = 0;
 
         if (string.IsNullOrEmpty(htmlContent))
             return (foundKeywords, 0);
 
-        var lowercaseContent = htmlContent.ToLowerInvariant();
+        // Strip HTML tags — analisa apenas texto visível ao usuário
+        var textContent = HtmlTagRegex().Replace(htmlContent, " ");
+        var score = 0;
 
-        // Check for keywords
-        foreach (var keyword in GamblingKeywords)
+        // Alta confiança (10 pts por match)
+        foreach (Match match in s_highConfidenceRegex.Matches(textContent))
         {
-            if (lowercaseContent.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            var keyword = match.Value;
+            if (!foundKeywords.Contains(keyword, StringComparer.OrdinalIgnoreCase))
             {
                 foundKeywords.Add(keyword);
-                keywordScore += 5; // Base score per keyword
+                score += 10;
             }
         }
 
-        // Check for URL patterns
+        // Média confiança (3 pts por match)
+        foreach (Match match in s_mediumConfidenceRegex.Matches(textContent))
+        {
+            var keyword = match.Value;
+            if (!foundKeywords.Contains(keyword, StringComparer.OrdinalIgnoreCase))
+            {
+                foundKeywords.Add(keyword);
+                score += 3;
+            }
+        }
+
+        // URL patterns no conteúdo original (incluindo atributos href)
         foreach (var pattern in URLPatterns)
         {
-            if (lowercaseContent.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+            if (htmlContent.Contains(pattern, StringComparison.OrdinalIgnoreCase))
             {
                 foundKeywords.Add($"url-pattern:{pattern}");
-                keywordScore += 10; // URL patterns are more suspicious
+                score += 10;
             }
         }
 
-        // Check for payment methods combined with gambling keywords
-        var hasPaymentMethod = PaymentRedFlags.Any(p => lowercaseContent.Contains(p, StringComparison.OrdinalIgnoreCase));
-        if (hasPaymentMethod && foundKeywords.Count > 0)
+        // Métodos de pagamento red-flag (só contam se já há keywords de gambling)
+        if (foundKeywords.Count > 0)
         {
-            keywordScore += 15; // Significant red flag
-            foundKeywords.Add("suspicious-payment-method");
+            foreach (var flag in PaymentRedFlags)
+            {
+                if (textContent.Contains(flag, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 15;
+                    foundKeywords.Add($"payment:{flag}");
+                    break;
+                }
+            }
         }
 
-        // Detect forms that suggest betting (input fields for amounts, odds, selections)
-        if (DetectBettingForms(lowercaseContent))
+        // Formulários de aposta (analisa HTML original — precisa de tags)
+        if (DetectBettingForms(htmlContent))
         {
-            keywordScore += 20;
+            score += 20;
             foundKeywords.Add("betting-form-detected");
         }
 
-        // Detect language patterns typical of gambling sites
-        if (DetectGamblingLanguagePatterns(lowercaseContent))
+        // Padrões linguísticos de gambling (analisa texto limpo)
+        if (DetectGamblingLanguagePatterns(textContent))
         {
-            keywordScore += 10;
+            score += 10;
             foundKeywords.Add("gambling-language-patterns");
         }
 
-        return (foundKeywords, Math.Min(keywordScore, 100));
+        return (foundKeywords, Math.Min(score, 100));
     }
 
     /// <summary>
-    /// Detect patterns typical of betting forms
+    /// Detecta formulários HTML típicos de sites de aposta.
+    /// Analisa o HTML original (precisa de tags).
     /// </summary>
-    private static bool DetectBettingForms(string content)
+    private static bool DetectBettingForms(string htmlContent)
     {
-        var patterns = new[]
-        {
-            @"<input.*?name.*?(amount|stake|wager|bet)",
-            @"<select.*?name.*?(odds|selection)",
-            @"<button.*?place bet|apostar|fazer aposta",
-            @"<form.*?(bet|aposta)"
-        };
-
-        return patterns.Any(pattern => Regex.IsMatch(content, pattern, RegexOptions.IgnoreCase));
+        return BettingInputRegex().IsMatch(htmlContent)
+            || BettingSelectRegex().IsMatch(htmlContent)
+            || BettingButtonRegex().IsMatch(htmlContent)
+            || BettingFormRegex().IsMatch(htmlContent);
     }
 
     /// <summary>
-    /// Detect language patterns typical of gambling sites
+    /// Detecta padrões linguísticos de persuasão comuns em sites de gambling.
     /// </summary>
-    private static bool DetectGamblingLanguagePatterns(string content)
+    private static bool DetectGamblingLanguagePatterns(string textContent)
     {
-        var patterns = new[]
-        {
-            @"(?:chance|chances)\s+(?:de|to)\s+(?:ganhar|win)",
-            @"(?:sua|your)\s+(?:sorte|luck)",
-            @"(?:rápido|quick)\s+(?:dinheiro|money)",
-            @"(?:ganhe|earn)\s+(?:agora|now)",
-            @"(?:melhor|best)\s+(?:apostas|bets)"
-        };
-
-        return patterns.Any(pattern => Regex.IsMatch(content, pattern, RegexOptions.IgnoreCase));
+        return LangPatternChanceRegex().IsMatch(textContent)
+            || LangPatternLuckRegex().IsMatch(textContent)
+            || LangPatternMoneyRegex().IsMatch(textContent)
+            || LangPatternEarnRegex().IsMatch(textContent)
+            || LangPatternBestBetsRegex().IsMatch(textContent);
     }
 
     /// <summary>
-    /// Check if domain structure suggests gambling
+    /// Analisa a estrutura do domínio para indicadores de gambling.
     /// </summary>
     public static int AnalyzeDomainStructure(string domain)
     {
-        /*
-         * TODO no hagezi há vários termos muito mais amplos para fazer essa verificação que dá para utilizar como base de inteligência para fazer essas comparações, 
-         * se não me engano lá tem wildcards acho que é isso, que tem vários termos que podem ser utilizados.
-         * talvez dá para eu treinar alguma llm local ou fazer uma de teste para isso, bem básica, pois eu não sei como funciona
-         */
         var score = 0;
         var lowercaseDomain = domain.ToLowerInvariant();
 
-        // Domain name patterns
-        var suspiciousPatterns = new[]
-        {
-            "bet", "casino", "poker", "blackjack", "roulette", "slots", "gamble",
-            "aposta", "cassino", "jogo", "bingo", "tigrinho", "crash", "mines",
-            "lucky", "fortune", "win", "gold", "club", "play", "pro", "ace"
-        };
+        // Padrões de domínio de ALTA confiança para gambling
+        // Removidos: "lucky", "fortune", "win", "gold", "club", "play", "pro", "ace"
+        // — genéricos demais (ex: "goldengate.com", "playstation.com", "proton.me")
+        string[] highConfidencePatterns =
+            ["bet", "casino", "poker", "blackjack", "roulette", "slots", "gamble",
+             "aposta", "cassino", "bingo", "tigrinho", "crash", "mines"];
 
-        foreach (var pattern in suspiciousPatterns)
+        foreach (var pattern in highConfidencePatterns)
         {
             if (lowercaseDomain.Contains(pattern))
             {
                 score += 15;
-                break; // Only count once
+                break;
             }
         }
 
-        // Very new TLDs suspicious for gambling
-        var suspiciousTlds = new[] { ".top", ".win", ".club", ".tech", ".online", ".site", ".space", ".xyz" };
+        // TLDs suspeitos — comuns em sites de gambling
+        // Removidos: ".tech", ".space" — usados por empresas tech legítimas
+        string[] suspiciousTlds = [".top", ".win", ".club", ".online", ".site", ".xyz"];
         if (suspiciousTlds.Any(tld => lowercaseDomain.EndsWith(tld)))
             score += 10;
 
         return Math.Min(score, 100);
+    }
+
+    /// <summary>
+    /// Constrói regex compilada com word boundaries a partir de lista de keywords.
+    /// Trata keywords multi-palavras e com caracteres especiais.
+    /// </summary>
+    private static Regex BuildWordBoundaryRegex(IEnumerable<string> keywords)
+    {
+        var escapedKeywords = keywords
+            .Select(k => Regex.Escape(k).Replace(@"\ ", @"\s+"))
+            .OrderByDescending(k => k.Length); // Padrões mais longos primeiro
+
+        var pattern = $@"\b(?:{string.Join("|", escapedKeywords)})\b";
+        return new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase);
     }
 }
