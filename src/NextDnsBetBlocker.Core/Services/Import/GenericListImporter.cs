@@ -21,17 +21,20 @@ public class GenericListImporter : IListImporter
     private readonly IListImportOrchestrator _orchestrator;
     private readonly IListBlobRepository _blobRepository;
     private readonly IListTableStorageRepository _tableRepository;
+    private readonly IDownloadService _downloadService;
 
     public GenericListImporter(
         ILogger<GenericListImporter> logger,
         IListImportOrchestrator orchestrator,
         IListBlobRepository blobRepository,
-        IListTableStorageRepository tableRepository)
+        IListTableStorageRepository tableRepository,
+        IDownloadService downloadService)
     {
         _logger = logger;
         _orchestrator = orchestrator;
         _blobRepository = blobRepository;
         _tableRepository = tableRepository;
+        _downloadService = downloadService;
     }
 
     /// <summary>
@@ -52,7 +55,7 @@ public class GenericListImporter : IListImporter
                 config.SourceUrl.Length);
 
             // 1. Baixar dados de todas as fontes
-            var domains = await DownloadAndParseAsync(config.SourceUrl, cancellationToken);
+            var domains = await _downloadService.DownloadAndParseAsync(config.SourceUrl, cancellationToken);
             _logger.LogInformation("Downloaded {Count:N0} domains from all sources", domains.Count);
 
             // 2. Chamar orchestrator para inserção paralela
@@ -107,7 +110,7 @@ public class GenericListImporter : IListImporter
 
             // 1. Baixar dados novo do servidor
             _logger.LogInformation("Downloading new list from sources");
-            var newDomains = await DownloadAndParseAsync(config.SourceUrl, cancellationToken);
+            var newDomains = await _downloadService.DownloadAndParseAsync(config.SourceUrl, cancellationToken);
             _logger.LogInformation("Downloaded {Count:N0} domains", newDomains.Count);
 
             // 2. Recuperar arquivo anterior do blob
@@ -193,109 +196,6 @@ public class GenericListImporter : IListImporter
             _logger.LogError(ex, "Diff import failed for {ListName}", config.ListName);
             throw;
         }
-    }
-
-    /// <summary>
-    /// Baixar e fazer parse de domínios de múltiplas fontes
-    /// Suporta URLs HTTP/HTTPS
-    /// Merge automático de múltiplas fontes
-    /// </summary>
-    private async Task<HashSet<string>> DownloadAndParseAsync(
-        string[] sourceUrls,
-        CancellationToken cancellationToken)
-    {
-        var allDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var sourceUrl in sourceUrls)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (string.IsNullOrWhiteSpace(sourceUrl))
-            {
-                _logger.LogWarning("Empty source URL, skipping");
-                continue;
-            }
-
-            try
-            {
-                _logger.LogInformation("Downloading from {SourceUrl}", sourceUrl);
-                var domainsParsed = await DownloadAndParseFromSourceAsync(sourceUrl, cancellationToken);
-                allDomains.UnionWith(domainsParsed);
-                _logger.LogInformation("Parsed {Count:N0} domains from {SourceUrl}", domainsParsed.Count, sourceUrl);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to download from {SourceUrl}, continuing with other sources", sourceUrl);
-                // Continuar com próxima fonte ao invés de falhar completamente
-            }
-        }
-
-        if (allDomains.Count == 0)
-        {
-            throw new InvalidOperationException($"No domains downloaded from any source");
-        }
-
-        return allDomains;
-    }
-
-    /// <summary>
-    /// Baixar e fazer parse de uma única fonte com retry automático
-    /// </summary>
-    private async Task<HashSet<string>> DownloadAndParseFromSourceAsync(
-        string sourceUrl,
-        CancellationToken cancellationToken)
-    {
-        var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        const int maxRetries = 3;
-        int attempt = 0;
-
-        while (attempt < maxRetries)
-        {
-            try
-            {
-                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                var content = await httpClient.GetStringAsync(sourceUrl, cancellationToken);
-
-                // Parse domínios
-                foreach (var line in content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var trimmed = line.Trim();
-
-                    // Ignorar linhas vazias e comentários
-                    if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("#"))
-                        continue;
-
-                    // Suportar formatos: "domínio" ou "rank,domínio" (Tranco)
-                    var domain = trimmed.Contains(',')
-                        ? trimmed.Split(',')[1].Trim()
-                        : trimmed;
-
-                    if (!string.IsNullOrWhiteSpace(domain))
-                    {
-                        domains.Add(domain.ToLowerInvariant());
-                    }
-                }
-
-                return domains; // Sucesso
-            }
-            catch (Exception ex)
-            {
-                attempt++;
-                if (attempt >= maxRetries)
-                {
-                    _logger.LogError(ex, "Failed to download from {SourceUrl} after {MaxRetries} attempts", sourceUrl, maxRetries);
-                    throw;
-                }
-
-                // Aguardar antes de retry (backoff exponencial)
-                var delayMs = (int)(1000 * Math.Pow(2, attempt - 1)); // 1s, 2s, 4s
-                _logger.LogWarning(ex, "Download attempt {Attempt}/{MaxRetries} failed for {SourceUrl}, retrying in {DelayMs}ms", 
-                    attempt, maxRetries, sourceUrl, delayMs);
-                await Task.Delay(delayMs, cancellationToken);
-            }
-        }
-
-        throw new InvalidOperationException($"Failed to download from {sourceUrl}");
     }
 
     private async Task<HashSet<string>> GetPreviousDomainsAsync(

@@ -113,6 +113,9 @@ public static class CoreServiceCollectionExtensions
         // ============= IMPORT ORCHESTRATOR =============
         services.AddSingleton<IListImportOrchestrator, ListImportOrchestrator>();
 
+        // ============= DOWNLOAD SERVICE =============
+        services.AddSingleton<IDownloadService, HttpDownloadService>();
+
         // ============= PARTITION KEY STRATEGY & LIST TABLE PROVIDER =============
 
 
@@ -131,7 +134,8 @@ public static class CoreServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<GenericListImporter>>(),
                 sp.GetRequiredService<IListImportOrchestrator>(),
                 sp.GetRequiredService<IListBlobRepository>(),
-                sp.GetRequiredService<IListTableStorageRepository>());
+                sp.GetRequiredService<IListTableStorageRepository>(),
+                sp.GetRequiredService<IDownloadService>());
         });
 
         // ============= GENERIC LIST IMPORTER (as IListImporter) =============

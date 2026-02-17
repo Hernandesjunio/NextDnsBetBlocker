@@ -13,6 +13,7 @@ public class GenericListImporterTests
     private readonly Mock<IListImportOrchestrator> _mockOrchestrator;
     private readonly Mock<IListBlobRepository> _mockBlobRepository;
     private readonly Mock<IListTableStorageRepository> _mockTableRepository;
+    private readonly Mock<IDownloadService> _mockDownloadService;
     private readonly Mock<ILogger<GenericListImporter>> _mockLogger;
     private readonly GenericListImporter _importer;
 
@@ -21,13 +22,15 @@ public class GenericListImporterTests
         _mockOrchestrator = new Mock<IListImportOrchestrator>();
         _mockBlobRepository = new Mock<IListBlobRepository>();
         _mockTableRepository = new Mock<IListTableStorageRepository>();
+        _mockDownloadService = new Mock<IDownloadService>();
         _mockLogger = new Mock<ILogger<GenericListImporter>>();
 
         _importer = new GenericListImporter(
             _mockLogger.Object,
             _mockOrchestrator.Object,
             _mockBlobRepository.Object,
-            _mockTableRepository.Object);
+            _mockTableRepository.Object,
+            _mockDownloadService.Object);
     }
 
     [Fact]
@@ -42,13 +45,22 @@ public class GenericListImporterTests
             BlobContainer = "test-container"
         };
 
+        var testDomains = new HashSet<string> { "domain1.com", "domain2.com", "domain3.com" };
+
         var expectedMetrics = new ImportMetrics
         {
-            TotalProcessed = 100,
-            TotalInserted = 100,
+            TotalProcessed = 3,
+            TotalInserted = 3,
             TotalErrors = 0,
             Status = ImportStatus.Completed
         };
+
+        // Mock download service
+        _mockDownloadService
+            .Setup(d => d.DownloadAndParseAsync(
+                It.IsAny<string[]>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(testDomains);
 
         _mockOrchestrator
             .Setup(o => o.ExecuteImportAsync(
@@ -84,8 +96,14 @@ public class GenericListImporterTests
         // Assert
         result.Should().NotBeNull();
         result.Status.Should().Be(ImportStatus.Completed);
-        result.TotalInserted.Should().Be(100);
+        result.TotalInserted.Should().Be(3);
 
+        // Verify download service was called
+        _mockDownloadService.Verify(
+            d => d.DownloadAndParseAsync(config.SourceUrl, cts.Token),
+            Times.Once);
+
+        // Verify orchestrator was called
         _mockOrchestrator.Verify(
             o => o.ExecuteImportAsync(
                 config,
@@ -95,6 +113,7 @@ public class GenericListImporterTests
                 cts.Token),
             Times.Once);
 
+        // Verify blob save was called
         _mockBlobRepository.Verify(
             b => b.SaveImportFileAsync(
                 config.BlobContainer,
@@ -116,13 +135,22 @@ public class GenericListImporterTests
             BlobContainer = "test-container"
         };
 
+        var testDomains = new HashSet<string> { "domain1.com", "domain2.com" };
+
         var metricsWithErrors = new ImportMetrics
         {
-            TotalProcessed = 100,
-            TotalInserted = 95,
-            TotalErrors = 5,
+            TotalProcessed = 2,
+            TotalInserted = 1,
+            TotalErrors = 1,
             Status = ImportStatus.Failed
         };
+
+        // Mock download service
+        _mockDownloadService
+            .Setup(d => d.DownloadAndParseAsync(
+                It.IsAny<string[]>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(testDomains);
 
         _mockOrchestrator
             .Setup(o => o.ExecuteImportAsync(
@@ -140,8 +168,9 @@ public class GenericListImporterTests
         var result = await _importer.ImportAsync(config, progress, cts.Token);
 
         // Assert
-        result.TotalErrors.Should().Be(5);
-        
+        result.TotalErrors.Should().Be(1);
+
+        // Verify blob save was NOT called (because there were errors)
         _mockBlobRepository.Verify(
             b => b.SaveImportFileAsync(
                 It.IsAny<string>(),
@@ -163,22 +192,38 @@ public class GenericListImporterTests
             BlobContainer = "test-container"
         };
 
+        // New domains from download
+        var newDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
+            { "domain1.com", "domain2.com", "domain3.com", "domain4.com", "domain5.com" };
+
+        // Previous domains from blob (simulation of older list)
+        var previousDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "domain2.com", "domain3.com", "domain6.com" };
+
         var addMetrics = new ImportMetrics
         {
-            TotalProcessed = 50,
-            TotalInserted = 50,
+            TotalProcessed = 3,
+            TotalInserted = 3,
             TotalErrors = 0,
             Status = ImportStatus.Completed
         };
 
         var removeMetrics = new ImportMetrics
         {
-            TotalProcessed = 20,
-            TotalInserted = 20,
+            TotalProcessed = 1,
+            TotalInserted = 1,
             TotalErrors = 0,
             Status = ImportStatus.Completed
         };
 
+        // Mock download service - returns new domains
+        _mockDownloadService
+            .Setup(d => d.DownloadAndParseAsync(
+                It.IsAny<string[]>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(newDomains);
+
+        // Mock orchestrator for Add
         _mockOrchestrator
             .Setup(o => o.ExecuteImportAsync(
                 It.IsAny<ListImportItemConfig>(),
@@ -188,6 +233,7 @@ public class GenericListImporterTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(addMetrics);
 
+        // Mock orchestrator for Remove
         _mockOrchestrator
             .Setup(o => o.ExecuteImportAsync(
                 It.IsAny<ListImportItemConfig>(),
@@ -197,12 +243,32 @@ public class GenericListImporterTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(removeMetrics);
 
+        // Mock blob repository - returns previous metadata (second import)
         _mockBlobRepository
             .Setup(b => b.GetImportMetadataAsync(
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ImportedListMetadata?)null); // Primeira importação (sem metadata anterior)
+            .ReturnsAsync(new ImportedListMetadata 
+            { 
+                ListName = "TestList",
+                RecordCount = previousDomains.Count,
+                FileHash = "testhash",
+                FileSizeBytes = 1000,
+                SourceVersion = DateTime.UtcNow.ToString("O")
+            });
+
+        // Mock blob repository - returns previous domains stream
+        _mockBlobRepository
+            .Setup(b => b.GetPreviousImportFileAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => 
+            {
+                var content = string.Join("\n", previousDomains);
+                return new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+            });
 
         _mockBlobRepository
             .Setup(b => b.SaveImportFileAsync(
@@ -229,9 +295,10 @@ public class GenericListImporterTests
         // Assert
         result.Should().NotBeNull();
         result.Status.Should().Be(ImportStatus.Completed);
-        result.TotalProcessed.Should().Be(70); // 50 adds + 20 removes
+        // 3 adds + 1 remove = 4 total
+        result.TotalProcessed.Should().Be(4);
 
-        // Verify que orchestrator foi chamado 2 vezes (Add e Remove)
+        // Verify orchestrator was called for Add
         _mockOrchestrator.Verify(
             o => o.ExecuteImportAsync(
                 config,
@@ -241,6 +308,7 @@ public class GenericListImporterTests
                 cts.Token),
             Times.Once);
 
+        // Verify orchestrator was called for Remove
         _mockOrchestrator.Verify(
             o => o.ExecuteImportAsync(
                 config,
@@ -263,6 +331,8 @@ public class GenericListImporterTests
             BlobContainer = "test-container"
         };
 
+        var testDomains = new HashSet<string> { "domain1.com", "domain2.com" };
+
         var metricsCompleted = new ImportMetrics
         {
             TotalProcessed = 0,
@@ -270,6 +340,13 @@ public class GenericListImporterTests
             TotalErrors = 0,
             Status = ImportStatus.Completed
         };
+
+        // Mock download service
+        _mockDownloadService
+            .Setup(d => d.DownloadAndParseAsync(
+                It.IsAny<string[]>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(testDomains);
 
         _mockOrchestrator
             .Setup(o => o.ExecuteImportAsync(
@@ -341,6 +418,13 @@ public class GenericListImporterTests
 
         var cts = new CancellationTokenSource();
         cts.Cancel();
+
+        // Mock download service to throw OperationCanceledException
+        _mockDownloadService
+            .Setup(d => d.DownloadAndParseAsync(
+                It.IsAny<string[]>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
 
         var progress = new Progress<ImportProgress>();
 
