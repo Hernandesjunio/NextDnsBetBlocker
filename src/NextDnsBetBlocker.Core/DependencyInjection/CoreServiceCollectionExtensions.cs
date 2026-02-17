@@ -13,7 +13,6 @@ using NextDnsBetBlocker.Core.Services;
 using NextDnsBetBlocker.Core.Services.Import;
 using NextDnsBetBlocker.Core.Services.Queue;
 using NextDnsBetBlocker.Core.Services.Storage;
-using System.Reflection.Metadata.Ecma335;
 
 /// <summary>
 /// Centraliza registro de DI para todas as camadas (Importer e Analysis)
@@ -229,6 +228,11 @@ public static class CoreServiceCollectionExtensions
         IServiceCollection services,
         IConfiguration configuration)
     {
+        // ============= WORKER SETTINGS (IOptions) =============
+        services.AddOptions<WorkerSettings>()
+            .Bind(configuration.GetSection("WorkerSettings"))
+            .ValidateOnStart();
+
         // ============= HTTP CLIENTS =============
         services.AddHttpClient<INextDnsClient, NextDnsClient>();
         services.AddHttpClient("HageziProvider")
