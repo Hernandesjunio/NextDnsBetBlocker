@@ -3,6 +3,7 @@ namespace NextDnsBetBlocker.Core.Services.Import;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 using System.Text.Json;
@@ -15,24 +16,16 @@ public class ListBlobRepository : IListBlobRepository
 {
     private readonly BlobContainerClient _containerClient;
     private readonly ILogger<ListBlobRepository> _logger;
+    private const string ContainerName = "tranco-lists";
 
     public ListBlobRepository(
-        string connectionString,
-        string containerName,
+        IOptions<WorkerSettings> options,
         ILogger<ListBlobRepository> logger)
     {
         _logger = logger;
-        
-        var blobServiceClient = new BlobServiceClient(connectionString);
-        _containerClient = blobServiceClient.GetBlobContainerClient(containerName);
-    }
 
-    public ListBlobRepository(
-        BlobContainerClient containerClient,
-        ILogger<ListBlobRepository> logger)
-    {
-        _containerClient = containerClient;
-        _logger = logger;
+        var blobServiceClient = new BlobServiceClient(options.Value.AzureStorageConnectionString);
+        _containerClient = blobServiceClient.GetBlobContainerClient(ContainerName);
     }
 
     public async Task<string> SaveImportFileAsync(

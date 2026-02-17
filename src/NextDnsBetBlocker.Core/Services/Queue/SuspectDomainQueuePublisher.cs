@@ -3,6 +3,7 @@ namespace NextDnsBetBlocker.Core.Services.Queue;
 using Azure.Storage.Queues;
 using Azure.Storage.Queues.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 using System.Text.Json;
@@ -20,12 +21,12 @@ public class SuspectDomainQueuePublisher : ISuspectDomainQueuePublisher
     private const string QueueName = "suspicious-domains";
 
     public SuspectDomainQueuePublisher(
-        string storageConnectionString,
+        IOptions<WorkerSettings> options,
         ILogger<SuspectDomainQueuePublisher> logger)
     {
         _logger = logger;
 
-        var queueServiceClient = new QueueServiceClient(storageConnectionString);
+        var queueServiceClient = new QueueServiceClient(options.Value.AzureStorageConnectionString);
         _queueClient = queueServiceClient.GetQueueClient(QueueName);
     }
 

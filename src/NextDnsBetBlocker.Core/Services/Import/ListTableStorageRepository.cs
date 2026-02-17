@@ -3,6 +3,7 @@ namespace NextDnsBetBlocker.Core.Services.Import;
 using Azure;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 using System.Collections.Concurrent;
@@ -20,11 +21,11 @@ public class ListTableStorageRepository : IListTableStorageRepository
     private const int MaxBatchSize = 100; // Limite do Table Storage
 
     public ListTableStorageRepository(
-        string connectionString,
+        IOptions<WorkerSettings> options,
         ILogger<ListTableStorageRepository> logger)
     {
         _logger = logger;
-        _tableServiceClient = new TableServiceClient(connectionString);
+        _tableServiceClient = new TableServiceClient(options.Value.AzureStorageConnectionString);
         _tableClientCache = new ConcurrentDictionary<string, TableClient>(StringComparer.OrdinalIgnoreCase);
     }
 

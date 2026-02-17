@@ -2,7 +2,9 @@ namespace NextDnsBetBlocker.Core.Services.Storage;
 
 using Azure.Storage.Blobs;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.Interfaces;
+using NextDnsBetBlocker.Core.Models;
 
 /// <summary>
 /// Inicializador centralizado para infraestrutura de armazenamento
@@ -33,11 +35,11 @@ public class StorageInfrastructureInitializer : IStorageInfrastructureInitialize
 
     public StorageInfrastructureInitializer(
         IListTableStorageRepository tableRepository,
-        string? azureStorageConnectionString,
+        IOptions<WorkerSettings> options,
         ILogger<StorageInfrastructureInitializer> logger)
     {
         _tableRepository = tableRepository;
-        _azureStorageConnectionString = azureStorageConnectionString;
+        _azureStorageConnectionString = options.Value.AzureStorageConnectionString;
         _logger = logger;
     }
 

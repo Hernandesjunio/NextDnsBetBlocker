@@ -69,14 +69,7 @@ public static class CoreServiceCollectionExtensions
 
 
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
-        services.AddSingleton<IStorageInfrastructureInitializer>(sp =>
-        {
-            var tableRepo = sp.GetRequiredService<IListTableStorageRepository>();
-            return new StorageInfrastructureInitializer(
-                tableRepo,
-                sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString,
-                sp.GetRequiredService<ILogger<StorageInfrastructureInitializer>>());
-        });
+        services.AddSingleton<IStorageInfrastructureInitializer, StorageInfrastructureInitializer>();
     }
 
     /// <summary>
@@ -131,22 +124,9 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IListImportOrchestrator, ListImportOrchestrator>();
 
         // ============= STORAGE REPOSITORIES =============
-        services.AddSingleton<IListTableStorageRepository>(sp =>
-        {
-            var connString = sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString;
-            return new ListTableStorageRepository(
-                connString,
-                sp.GetRequiredService<ILogger<ListTableStorageRepository>>());
-        });
+        services.AddSingleton<IListTableStorageRepository, ListTableStorageRepository>();
 
-        services.AddSingleton<IListBlobRepository>(sp =>
-        {
-            var connString = sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString;
-            return new ListBlobRepository(
-                connString,
-                "tranco-lists",
-                sp.GetRequiredService<ILogger<ListBlobRepository>>());
-        });
+        services.AddSingleton<IListBlobRepository, ListBlobRepository>();
 
         // ============= LIST TABLE PROVIDER (with cache) =============
         RegisterListTableProvider(services, (sp) => sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString);
@@ -252,13 +232,7 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IAnalysisConsumer, AnalysisConsumer>();
 
         // ============= QUEUE PUBLISHER FOR ANALYSIS =============
-        services.AddSingleton<ISuspectDomainQueuePublisher>(sp =>
-        {
-            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
-            return new SuspectDomainQueuePublisher(
-                connString,
-                sp.GetRequiredService<ILogger<SuspectDomainQueuePublisher>>());
-        });
+        services.AddSingleton<ISuspectDomainQueuePublisher, SuspectDomainQueuePublisher>();
 
         // ============= BET BLOCKER PIPELINE =============
         services.AddSingleton<IBetBlockerPipeline, BetBlockerPipeline>();
