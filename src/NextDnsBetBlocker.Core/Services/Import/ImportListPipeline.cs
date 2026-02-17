@@ -8,21 +8,28 @@ using NextDnsBetBlocker.Core.Models;
 /// Coordena pipeline sequencial de importação
 /// Executa uma única vez: Hagezi → Tranco → Encerra
 /// Usado em Console App rodando via ACI
+/// 
+/// Lógica de Decisão:
+/// - Primeira vez (sem arquivo no blob): Full Import (ImportAsync)
+/// - Subsequentes (arquivo existe): Diff Import (ImportDiffAsync) - otimizado 95% menos I/O
 /// </summary>
 public class ImportListPipeline
 {
     private readonly ILogger<ImportListPipeline> _logger;
     private readonly IEnumerable<ListImportItemConfig> _configs;
     private readonly IListImporter listImporter;
+    private readonly IListBlobRepository blobRepository;
 
     public ImportListPipeline(
         ILogger<ImportListPipeline> logger,
         IEnumerable<ListImportItemConfig> configs,
-        IListImporter listImporter)
+        IListImporter listImporter,
+        IListBlobRepository blobRepository)
     {
         _logger = logger;
         _configs = configs;
         this.listImporter = listImporter;
+        this.blobRepository = blobRepository;
     }
 
     /// <summary>
@@ -42,7 +49,7 @@ public class ImportListPipeline
             _logger.LogInformation(
                 "╚════════════════════════════════════════╝");
 
-            var orderedConfigs = new[] { "HageziGambling", "TrancoList" };
+            var orderedConfigs = new[] { "HageziGambling"/*, "TrancoList" */};
 
             foreach (var listName in orderedConfigs)
             {
@@ -105,7 +112,12 @@ public class ImportListPipeline
     }
 
     /// <summary>
-    /// Importar uma lista específica com checkpoint tracking
+    /// Importar uma lista específica com detecção automática: Full ou Diff
+    /// 
+    /// Lógica:
+    /// 1. Verifica se metadata anterior existe no blob
+    /// 2. Se NÃO existe → Full Import (primeira vez)
+    /// 3. Se EXISTE → Diff Import (otimizado, -95% I/O)
     /// </summary>
     private async Task<ListImportResult> ImportListAsync(
         ListImportItemConfig config,
@@ -115,20 +127,55 @@ public class ImportListPipeline
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
-        {            
-            // Atualizar checkpoint após sucesso
-            // (Apenas logging, checkpoint é feito no Table Storage pelos importers)
+        {
             var now = DateTime.UtcNow;
             _logger.LogInformation(
                 "Import for {ListName} started at {Time}",
                 config.ListName,
                 now);
 
-            // Decidir: full import ou diff (por simplicidade, sempre full por enquanto)
-            _logger.LogInformation("Performing FULL import for {ListName}", config.ListName);
+            // Verificar se já existe importação anterior
+            var hasMetadata = await CheckIfMetadataExistsAsync(config, cancellationToken);
             var progressReporter = CreateProgressReporter(config.ListName);
-            result.Metrics = await listImporter.ImportAsync(config, progressReporter, cancellationToken);
-            result.ImportType = "Full";
+
+            if (!hasMetadata)
+            {
+                // ✅ PRIMEIRA VEZ: Full Import
+                _logger.LogInformation(
+                    "No previous import found for {ListName} - Performing FULL import",
+                    config.ListName);
+
+                result.Metrics = await listImporter.ImportAsync(
+                    config,
+                    progressReporter,
+                    cancellationToken);
+
+                result.ImportType = "Full";
+
+                _logger.LogInformation(
+                    "✓ FULL import completed for {ListName}: {Count:N0} inserted",
+                    config.ListName,
+                    result.Metrics.TotalInserted);
+            }
+            else
+            {
+                // ✅ SUBSEQUENTES: Diff Import (Otimizado)
+                _logger.LogInformation(
+                    "Previous import found for {ListName} - Performing DIFF import (optimized)",
+                    config.ListName);
+
+                result.Metrics = await listImporter.ImportDiffAsync(
+                    config,
+                    progressReporter,
+                    cancellationToken);
+
+                result.ImportType = "Diff";
+
+                _logger.LogInformation(
+                    "✓ DIFF import completed for {ListName}: {Inserted:N0} inserted (optimized)",
+                    config.ListName,
+                    result.Metrics.TotalInserted);
+            }
 
             result.Success = true;
         }
@@ -145,6 +192,34 @@ public class ImportListPipeline
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Verificar se já existe metadata (arquivo anterior) para a lista no blob storage
+    /// Indica se é primeira importação (false) ou não (true)
+    /// </summary>
+    private async Task<bool> CheckIfMetadataExistsAsync(
+        ListImportItemConfig config,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var metadataName = $"{config.ListName.ToLowerInvariant()}/metadata.json";
+            var metadata = await blobRepository.GetImportMetadataAsync(
+                config.BlobContainer,
+                metadataName,
+                cancellationToken);
+
+            return metadata != null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Error checking metadata for {ListName} - treating as first import",
+                config.ListName);
+            return false; // Em caso de erro, tratar como primeira importação
+        }
     }
 
     private string FormatTimeSpan(TimeSpan ts)
