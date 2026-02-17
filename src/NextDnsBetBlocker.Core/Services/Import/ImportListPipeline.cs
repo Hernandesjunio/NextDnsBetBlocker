@@ -42,7 +42,7 @@ public class ImportListPipeline
             _logger.LogInformation(
                 "╚════════════════════════════════════════╝");
 
-            var orderedConfigs = new[] { "Hagezi", "TrancoList" };
+            var orderedConfigs = new[] { "HageziGambling", "TrancoList" };
 
             foreach (var listName in orderedConfigs)
             {

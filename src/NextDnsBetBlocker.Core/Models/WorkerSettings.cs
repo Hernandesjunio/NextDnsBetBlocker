@@ -11,9 +11,9 @@ public class WorkerSettings
     public string NextDnsApiKey { get; set; } = string.Empty;
     public string NextDnsProfileId { get; set; } = string.Empty;
     public string NextDnsBaseUrl { get; set; } = "https://api.nextdns.io";
-    
+
     // Azure Storage Configuration
-    public string? AzureStorageConnectionString { get; set; }
+    public string AzureStorageConnectionString { get; set; } = string.Empty;
     public bool UseBlobStorage { get; set; } = false;
     
     // Processing Configuration

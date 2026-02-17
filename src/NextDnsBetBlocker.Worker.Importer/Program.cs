@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NextDnsBetBlocker.Core.DependencyInjection;
+using NextDnsBetBlocker.Core.Models;
 using NextDnsBetBlocker.Core.Services.Import;
 
 /// <summary>
@@ -49,6 +50,10 @@ services.AddCoreServices(config, ServiceLayerType.Importer);
 
 // ============= PIPELINE & FACTORY =============
 services.AddSingleton<ImportListPipeline>();
+
+services.AddOptions<ListImportConfig>()
+    .Bind(config.GetSection("ListImport"))
+    .ValidateOnStart();
 
 // ============= BUILD SERVICE PROVIDER =============
 var serviceProvider = services.BuildServiceProvider();

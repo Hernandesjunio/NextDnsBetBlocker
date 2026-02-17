@@ -13,6 +13,7 @@ using NextDnsBetBlocker.Core.Services;
 using NextDnsBetBlocker.Core.Services.Import;
 using NextDnsBetBlocker.Core.Services.Queue;
 using NextDnsBetBlocker.Core.Services.Storage;
+using System.Reflection.Metadata.Ecma335;
 
 /// <summary>
 /// Centraliza registro de DI para todas as camadas (Importer e Analysis)
@@ -97,7 +98,7 @@ public static class CoreServiceCollectionExtensions
     {
         // ============= IMPORT INFRASTRUCTURE =============
         services.AddSingleton<IImportMetricsCollector, ImportMetricsCollector>();
-        
+
         services.AddSingleton<IImportRateLimiter>(sp => new ImportRateLimiter(150000));
 
         // ============= HTTP CLIENT =============
@@ -142,7 +143,7 @@ public static class CoreServiceCollectionExtensions
         // ============= STORAGE REPOSITORIES =============
         services.AddSingleton<IListTableStorageRepository>(sp =>
         {
-            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
+            var connString = sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString;
             return new ListTableStorageRepository(
                 connString,
                 sp.GetRequiredService<ILogger<ListTableStorageRepository>>());
@@ -150,7 +151,7 @@ public static class CoreServiceCollectionExtensions
 
         services.AddSingleton<IListBlobRepository>(sp =>
         {
-            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
+            var connString = sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString;
             return new ListBlobRepository(
                 connString,
                 "tranco-lists",
@@ -158,7 +159,7 @@ public static class CoreServiceCollectionExtensions
         });
 
         // ============= LIST TABLE PROVIDER (with cache) =============
-        RegisterListTableProvider(services);
+        RegisterListTableProvider(services, (sp) => sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString);
 
         // ============= GENERIC LIST IMPORTER =============
         services.AddSingleton<GenericListImporter>(sp =>
@@ -187,7 +188,7 @@ public static class CoreServiceCollectionExtensions
         // Register HageziProvider for Importer layer
         services.AddSingleton<IHageziProvider>(sp =>
         {
-            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
+            var connString = sp.GetRequiredService<IOptions<ListImportConfig>>().Value.AzureStorageConnectionString;
             var blobServiceClient = new BlobServiceClient(connString);
             var containerClient = blobServiceClient.GetBlobContainerClient("hagezi-lists");
 
@@ -203,14 +204,13 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<ITrancoAllowlistProvider, TrancoAllowlistProvider>();
     }
 
-    private static void RegisterListTableProvider(IServiceCollection services)
+    private static void RegisterListTableProvider(IServiceCollection services, Func<IServiceProvider, string> fnConnectionString)
     {
         services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
 
         services.AddSingleton<IListTableProvider>(sp =>
-        {
-            var connString = sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString;
-            var tableServiceClient = new TableServiceClient(connString);
+        {            
+            var tableServiceClient = new TableServiceClient(fnConnectionString.Invoke(sp));
             var tableClient = tableServiceClient.GetTableClient("TrancoList");
             var cache = sp.GetRequiredService<IMemoryCache>();
             var partitionStrategy = sp.GetRequiredService<IPartitionKeyStrategy>();
@@ -243,7 +243,7 @@ public static class CoreServiceCollectionExtensions
             .ValidateOnStart();
 
 
-        RegisterListTableProvider(services);
+        RegisterListTableProvider(services, sp => sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString);
 
         // ============= AZURE STORAGE - TABLE CLIENTS =============
 

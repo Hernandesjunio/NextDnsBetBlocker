@@ -6,6 +6,11 @@ namespace NextDnsBetBlocker.Core.Models;
 public class ListImportConfig
 {
     /// <summary>
+    /// String de conexão
+    /// </summary>
+    public string AzureStorageConnectionString { get; set; } = string.Empty;
+
+    /// <summary>
     /// Nome da lista (ex: TrancoList, HageziList)
     /// </summary>
     public required string ListName { get; set; }
