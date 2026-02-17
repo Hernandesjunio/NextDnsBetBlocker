@@ -13,7 +13,7 @@ public class ListImportConfig
     /// <summary>
     /// URL ou caminho da fonte de dados
     /// </summary>
-    public required string SourceUrl { get; set; }
+    public required string[] SourceUrl { get; set; }
 
     /// <summary>
     /// Nome da tabela no Table Storage

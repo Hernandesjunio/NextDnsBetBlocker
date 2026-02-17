@@ -79,13 +79,19 @@ public class GenericListImporter : IListImporter
             _logger.LogInformation(
                 "Starting diff import for {ListName} from {SourceUrl}",
                 config.ListName,
-                config.SourceUrl);
+                string.Join(", ", config.SourceUrl));
 
             var metrics = new ImportMetrics();
 
-            // 1. Baixar arquivo novo do servidor
-            _logger.LogInformation("Downloading new list from {SourceUrl}", config.SourceUrl);
-            var newDomains = await DownloadAndParseAsync(config.SourceUrl, cancellationToken);
+            // 1. Baixar arquivo novo do servidor (usar primeira URL para diff)
+            var sourceUrl = config.SourceUrl.FirstOrDefault();
+            if (string.IsNullOrEmpty(sourceUrl))
+            {
+                throw new InvalidOperationException($"No source URLs configured for {config.ListName}");
+            }
+
+            _logger.LogInformation("Downloading new list from {SourceUrl}", sourceUrl);
+            var newDomains = await DownloadAndParseAsync(sourceUrl, cancellationToken);
             _logger.LogInformation("Downloaded {Count} domains", newDomains.Count);
 
             // 2. Recuperar arquivo anterior do blob
