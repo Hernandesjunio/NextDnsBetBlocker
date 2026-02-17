@@ -9,9 +9,9 @@ public class BlockedDomainStore : IBlockedDomainStore
     private readonly TableClient _tableClient;
     private readonly ILogger<BlockedDomainStore> _logger;
     
-    public BlockedDomainStore(TableClient tableClient, ILogger<BlockedDomainStore> logger)
+    public BlockedDomainStore(TableServiceClient tableServiceClient, ILogger<BlockedDomainStore> logger)
     {
-        _tableClient = tableClient;
+        _tableClient = tableServiceClient.GetTableClient("BlockedDomains");
         _logger = logger;
     }
 

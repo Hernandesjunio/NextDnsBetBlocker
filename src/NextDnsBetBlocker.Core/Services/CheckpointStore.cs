@@ -11,13 +11,12 @@ public class CheckpointStore : ICheckpointStore
     private const string TableName = "AgentState";
     private const string PartitionKey = "checkpoint";
 
-    public CheckpointStore(TableClient tableClient, ILogger<CheckpointStore> logger)
+    public CheckpointStore(TableServiceClient tableServiceClient, ILogger<CheckpointStore> logger)
     {
-        _tableClient = tableClient;
+        var checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
+        checkpointTableClient.CreateIfNotExists();
+        _tableClient = checkpointTableClient;
         _logger = logger;
-
-        // Ensure table exists on initialization
-        _tableClient.CreateIfNotExists();
     }
 
     public async Task<DateTime?> GetLastTimestampAsync(string profileId)

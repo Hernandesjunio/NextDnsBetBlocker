@@ -13,9 +13,9 @@ public class GamblingSuspectStore : IGamblingSuspectStore
     private const string PartitionKeyAnalyzed = "analyzed";
     private const string PartitionKeyWhitelist = "whitelist";
 
-    public GamblingSuspectStore(TableClient tableClient, ILogger<GamblingSuspectStore> logger)
+    public GamblingSuspectStore(TableServiceClient tableServiceClient, ILogger<GamblingSuspectStore> logger)
     {
-        _tableClient = tableClient;
+        _tableClient = tableServiceClient.GetTableClient("GamblingSuspects");
         _logger = logger;
     }
 

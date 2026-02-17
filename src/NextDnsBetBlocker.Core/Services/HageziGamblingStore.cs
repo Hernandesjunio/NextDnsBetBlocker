@@ -16,9 +16,9 @@ public class HageziGamblingStore : IHageziGamblingStore
     private readonly ILogger<HageziGamblingStore> _logger;
     private const string PartitionKey = "gambling";
 
-    public HageziGamblingStore(TableClient tableClient, ILogger<HageziGamblingStore> logger)
+    public HageziGamblingStore(TableServiceClient tableServiceClient, ILogger<HageziGamblingStore> logger)
     {
-        _tableClient = tableClient;
+        _tableClient = tableServiceClient.GetTableClient("HageziGambling");
         _logger = logger;
     }
 

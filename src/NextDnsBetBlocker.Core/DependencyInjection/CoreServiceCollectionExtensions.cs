@@ -65,10 +65,7 @@ public static class CoreServiceCollectionExtensions
         services.AddMemoryCache();
 
         // ============= CHECKPOINT STORE (Shared) =============
-        services.AddSingleton<ICheckpointStore>(sp =>
-            new CheckpointStore(
-                sp.GetRequiredService<TableServiceClient>().GetTableClient("AgentState"),
-                sp.GetRequiredService<ILogger<CheckpointStore>>()));
+        services.AddSingleton<ICheckpointStore, CheckpointStore>();
 
 
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
@@ -244,22 +241,13 @@ public static class CoreServiceCollectionExtensions
         RegisterListTableProvider(services, sp => sp.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString);
 
         // ============= AZURE STORAGE - TABLE CLIENTS =============
-        services.AddSingleton<IBlockedDomainStore>(sp =>
-            new BlockedDomainStore(
-                sp.GetRequiredService<TableServiceClient>().GetTableClient("BlockedDomains"),
-                sp.GetRequiredService<ILogger<BlockedDomainStore>>()));
+        services.AddSingleton<IBlockedDomainStore, BlockedDomainStore>();
 
         // ICheckpointStore já é registrado em RegisterSharedServices
-        services.AddSingleton<IGamblingSuspectStore>(sp =>
-            new GamblingSuspectStore(
-                sp.GetRequiredService<TableServiceClient>().GetTableClient("GamblingSuspects"),
-                sp.GetRequiredService<ILogger<GamblingSuspectStore>>()));
+        services.AddSingleton<IGamblingSuspectStore, GamblingSuspectStore>();
 
         // ============= HAGEZI GAMBLING STORE (Table Storage Query) =============
-        services.AddSingleton<IHageziGamblingStore>(sp =>
-            new HageziGamblingStore(
-                sp.GetRequiredService<TableServiceClient>().GetTableClient("HageziGambling"),
-                sp.GetRequiredService<ILogger<HageziGamblingStore>>()));
+        services.AddSingleton<IHageziGamblingStore, HageziGamblingStore>();
 
 
         // ============= BLOB STORAGE FOR HAGEZI =============        
