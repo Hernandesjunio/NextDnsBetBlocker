@@ -13,35 +13,60 @@ namespace NextDnsBetBlocker.Worker.Importer
         public string RowKey { get; set; }
     }
 
+    /// <summary>
+    /// Configuração de throttling (taxa de operações por segundo)
+    /// </summary>
+    public record ThrottlingConfig(
+        int GlobalLimitPerSecond,
+        int PartitionLimitPerSecond);
+
+    /// <summary>
+    /// Configuração de processamento de uma partição
+    /// Define como batches são formados e processados em paralelo
+    /// </summary>
+    public record PartitionProcessingConfig(
+        int BatchSize = 100,
+        int FlushWorkerCount = 5)
+    {
+        /// <summary>
+        /// Valida se a configuração é sensata
+        /// </summary>
+        public void Validate()
+        {
+            if (BatchSize <= 0)
+                throw new ArgumentException("BatchSize deve ser maior que 0", nameof(BatchSize));
+            
+            if (FlushWorkerCount <= 0)
+                throw new ArgumentException("FlushWorkerCount deve ser maior que 0", nameof(FlushWorkerCount));
+        }
+    }
+
     public class PartitionWorker
     {
         private readonly string _partitionKey;
         private readonly HierarchicalThrottler _throttler;
-        private readonly Channel<object> _itemsChannel;
-        private readonly Channel<List<object>> _batchesChannel;
-        private readonly int _batchSize;
-        private readonly int _flushWorkerCount;
+        private readonly Channel<Entity> _itemsChannel;
+        private readonly Channel<List<Entity>> _batchesChannel;
+        private readonly PartitionProcessingConfig _processingConfig;
 
         public PartitionWorker(
             string partitionKey, 
-            HierarchicalThrottler throttler, 
-            int batchSize = 100,
-            int flushWorkerCount = 5)
+            HierarchicalThrottler throttler,
+            PartitionProcessingConfig processingConfig)
         {
             _partitionKey = partitionKey;
             _throttler = throttler;
-            _batchSize = batchSize;
-            _flushWorkerCount = flushWorkerCount;
-            _itemsChannel = Channel.CreateUnbounded<object>();
-            _batchesChannel = Channel.CreateUnbounded<List<object>>();
+            _processingConfig = processingConfig;
+            _itemsChannel = Channel.CreateUnbounded<Entity>();
+            _batchesChannel = Channel.CreateUnbounded<List<Entity>>();
         }
 
-        public ChannelWriter<object> Writer => _itemsChannel.Writer;
+        public ChannelWriter<Entity> Writer => _itemsChannel.Writer;
 
         public async Task StartAsync()
         {
             var batcherTask = BatcherWorkerAsync();
-            var flushTasks = Enumerable.Range(0, _flushWorkerCount)
+            var flushTasks = Enumerable.Range(0, _processingConfig.FlushWorkerCount)
                 .Select(_ => FlushWorkerAsync())
                 .ToList();
 
@@ -51,23 +76,21 @@ namespace NextDnsBetBlocker.Worker.Importer
             );
         }
 
-        // Worker que agrupa itens em batches
         private async Task BatcherWorkerAsync()
         {
-            var buffer = new List<object>(_batchSize);
+            var buffer = new List<Entity>(_processingConfig.BatchSize);
 
             await foreach (var item in _itemsChannel.Reader.ReadAllAsync())
             {
                 buffer.Add(item);
 
-                if (buffer.Count >= _batchSize)
+                if (buffer.Count >= _processingConfig.BatchSize)
                 {
                     await _batchesChannel.Writer.WriteAsync(buffer);
-                    buffer = new List<object>(_batchSize);
+                    buffer = new List<Entity>(_processingConfig.BatchSize);
                 }
             }
 
-            // Enfileira o último batch
             if (buffer.Count > 0)
             {
                 await _batchesChannel.Writer.WriteAsync(buffer);
@@ -76,7 +99,6 @@ namespace NextDnsBetBlocker.Worker.Importer
             _batchesChannel.Writer.Complete();
         }
 
-        // Múltiplos workers que consomem batches do canal e enviam em paralelo
         private async Task FlushWorkerAsync()
         {
             await foreach (var batch in _batchesChannel.Reader.ReadAllAsync())
@@ -88,32 +110,36 @@ namespace NextDnsBetBlocker.Worker.Importer
             }
         }
 
-        private async Task SendToTableStorage(string pk, List<object> data) => await Task.Delay(1000);//await Task.CompletedTask;
+        private async Task SendToTableStorage(string pk, List<Entity> data) 
+            => await Task.Delay(1000);
     }
 
     public class ShardingProcessor
     {
         private readonly ConcurrentDictionary<string, PartitionWorker> _workers = new();
         private readonly HierarchicalThrottler _throttler;
-        private readonly int _batchSize;
-        private readonly int _flushWorkerCount;
+        private readonly PartitionProcessingConfig _partitionProcessingConfig;
 
         public ShardingProcessor(
-            int globalLimit, 
-            int partitionLimit,
-            int batchSize = 100,
-            int flushWorkerCount = 5)
+            ThrottlingConfig throttlingConfig,
+            PartitionProcessingConfig partitionProcessingConfig)
         {
-            _throttler = new HierarchicalThrottler(globalLimit, partitionLimit);
-            _batchSize = batchSize;
-            _flushWorkerCount = flushWorkerCount;
+            throttlingConfig = throttlingConfig ?? throw new ArgumentNullException(nameof(throttlingConfig));
+            partitionProcessingConfig = partitionProcessingConfig ?? throw new ArgumentNullException(nameof(partitionProcessingConfig));
+            
+            partitionProcessingConfig.Validate();
+
+            _throttler = new HierarchicalThrottler(
+                throttlingConfig.GlobalLimitPerSecond, 
+                throttlingConfig.PartitionLimitPerSecond);
+            
+            _partitionProcessingConfig = partitionProcessingConfig;
         }
 
         public async Task ProcessAsync(IEnumerable<Entity> dataSource)
         {
             var workerTasks = new List<Task>();
 
-            // Producer
             foreach (var item in dataSource)
             {
                 string pk = item.PartitionKey;
@@ -122,9 +148,9 @@ namespace NextDnsBetBlocker.Worker.Importer
                 {
                     var newWorker = new PartitionWorker(
                         key, 
-                        _throttler, 
-                        _batchSize, 
-                        _flushWorkerCount);
+                        _throttler,
+                        _partitionProcessingConfig);
+                    
                     workerTasks.Add(newWorker.StartAsync());
                     return newWorker;
                 });
@@ -132,7 +158,6 @@ namespace NextDnsBetBlocker.Worker.Importer
                 await worker.Writer.WriteAsync(item);
             }
 
-            // Finalization
             foreach (var worker in _workers.Values)
             {
                 worker.Writer.Complete();
@@ -148,10 +173,10 @@ namespace NextDnsBetBlocker.Worker.Importer
         private readonly TokenBucket _globalBucket;
         private readonly int _maxPerPartition;
 
-        public HierarchicalThrottler(int globalLimit, int partitionLimit)
+        public HierarchicalThrottler(int globalLimitPerSecond, int partitionLimitPerSecond)
         {
-            _globalBucket = new TokenBucket(globalLimit);
-            _maxPerPartition = partitionLimit;
+            _globalBucket = new TokenBucket(globalLimitPerSecond);
+            _maxPerPartition = partitionLimitPerSecond;
         }
 
         public async Task ExecuteAsync(string partitionKey, int recordCount, Func<Task> callback)
