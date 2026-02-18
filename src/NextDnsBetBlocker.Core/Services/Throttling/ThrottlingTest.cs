@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace NextDnsBetBlocker.Core
 {
@@ -154,7 +155,6 @@ namespace NextDnsBetBlocker.Core
                 var breaker = _throttler.GetCircuitBreakerState(_partitionKey);
                 if (breaker == CircuitBreakerState.Open)
                 {
-                    Console.WriteLine($"[CIRCUIT BREAKER] Partição '{_partitionKey}' indisponível. Ignorando batch.");
                     continue;
                 }
 
@@ -298,18 +298,21 @@ namespace NextDnsBetBlocker.Core
         private readonly AdaptiveDegradationConfig _degradationConfig;
         private readonly ConcurrentDictionary<string, PartitionDegradationState> _degradationStates = new();
         private readonly ShardingProcessorMetrics _metrics;
+        private readonly ILogger<HierarchicalThrottler> _logger;
 
         public HierarchicalThrottler(
             int globalLimitPerSecond, 
             int partitionLimitPerSecond,
             AdaptiveDegradationConfig? degradationConfig = null,
-            ShardingProcessorMetrics? metrics = null)
+            ShardingProcessorMetrics? metrics = null,
+            ILogger<HierarchicalThrottler>? logger = null)
         {
             _globalBucket = new TokenBucket(globalLimitPerSecond);
             _originalPartitionLimit = partitionLimitPerSecond;
             _degradationConfig = degradationConfig ?? new AdaptiveDegradationConfig();
             _degradationConfig.Validate();
             _metrics = metrics ?? new ShardingProcessorMetrics();
+            _logger = logger;
         }
 
         public CircuitBreakerState GetCircuitBreakerState(string partitionKey)
@@ -332,7 +335,9 @@ namespace NextDnsBetBlocker.Core
                 if (state.ShouldAttemptCircuitBreakerReset(_degradationConfig.CircuitBreakerResetIntervalSeconds))
                 {
                     state.ResetCircuitBreaker();
-                    Console.WriteLine($"[CIRCUIT BREAKER RESET] Partição '{partitionKey}' tentando se recuperar.");
+                    _logger.LogInformation(
+                        "Circuit breaker reset for partition {PartitionKey}. Attempting recovery",
+                        partitionKey);
                     _metrics.RecordCircuitBreakerReset(partitionKey);
                 }
                 else
@@ -348,7 +353,11 @@ namespace NextDnsBetBlocker.Core
 
             if (newLimit != previousLimit)
             {
-                Console.WriteLine($"[DEGRADATION] Partição '{partitionKey}': {previousLimit} → {newLimit} ops/seg");
+                _logger.LogWarning(
+                    "Partition {PartitionKey} degraded: {PreviousLimit} → {NewLimit} ops/sec",
+                    partitionKey,
+                    previousLimit,
+                    newLimit);
                 int degradationPercentage = (newLimit * 100) / _originalPartitionLimit;
                 _metrics.RecordDegradation(partitionKey, degradationPercentage);
             }
@@ -358,7 +367,10 @@ namespace NextDnsBetBlocker.Core
                 if (state.CircuitBreakerState != CircuitBreakerState.Open)
                 {
                     state.OpenCircuitBreaker();
-                    Console.WriteLine($"[CIRCUIT BREAKER OPENED] Partição '{partitionKey}' indisponível. Parando tentativas por {_degradationConfig.CircuitBreakerResetIntervalSeconds}s");
+                    _logger.LogCritical(
+                        "Circuit breaker opened for partition {PartitionKey}. Resource unavailable. Will retry after {ResetIntervalSeconds} seconds",
+                        partitionKey,
+                        _degradationConfig.CircuitBreakerResetIntervalSeconds);
                     _metrics.RecordCircuitBreakerOpening(partitionKey);
                 }
             }
@@ -375,7 +387,10 @@ namespace NextDnsBetBlocker.Core
                     state.ShouldAttemptRecovery(_degradationConfig.RecoveryIntervalSeconds))
                 {
                     state.RecoverGradually(_originalPartitionLimit);
-                    Console.WriteLine($"[RECOVERY] Partição '{partitionKey}': {state.CurrentDegradedLimit} ops/seg");
+                    _logger.LogInformation(
+                        "Partition {PartitionKey} recovering. Limit restored to {CurrentLimit} ops/sec",
+                        partitionKey,
+                        state.CurrentDegradedLimit);
                 }
             }
         }
