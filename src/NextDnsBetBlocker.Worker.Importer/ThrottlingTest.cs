@@ -1,10 +1,6 @@
-﻿
-    using System;
-using System;
-using System.Collections.Concurrent;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -15,69 +11,102 @@ namespace NextDnsBetBlocker.Worker.Importer
     {
         public string PartitionKey { get; set; }
         public string RowKey { get; set; }
-
     }
 
     public class PartitionWorker
     {
         private readonly string _partitionKey;
         private readonly HierarchicalThrottler _throttler;
-        private readonly List<object> _buffer = new(100);
-        private readonly Channel<object> _channel;
+        private readonly Channel<object> _itemsChannel;
+        private readonly Channel<List<object>> _batchesChannel;
+        private readonly int _batchSize;
+        private readonly int _flushWorkerCount;
 
-        public PartitionWorker(string partitionKey, HierarchicalThrottler throttler)
+        public PartitionWorker(
+            string partitionKey, 
+            HierarchicalThrottler throttler, 
+            int batchSize = 100,
+            int flushWorkerCount = 5)
         {
             _partitionKey = partitionKey;
             _throttler = throttler;
-            // Unbounded ou Bounded dependendo da sua memória
-            _channel = Channel.CreateUnbounded<object>();
+            _batchSize = batchSize;
+            _flushWorkerCount = flushWorkerCount;
+            _itemsChannel = Channel.CreateUnbounded<object>();
+            _batchesChannel = Channel.CreateUnbounded<List<object>>();
         }
 
-        public ChannelWriter<object> Writer => _channel.Writer;
+        public ChannelWriter<object> Writer => _itemsChannel.Writer;
 
         public async Task StartAsync()
         {
-            await foreach (var item in _channel.Reader.ReadAllAsync())
-            {
-                _buffer.Add(item);
+            var batcherTask = BatcherWorkerAsync();
+            var flushTasks = Enumerable.Range(0, _flushWorkerCount)
+                .Select(_ => FlushWorkerAsync())
+                .ToList();
 
-                if (_buffer.Count == 100)
+            await Task.WhenAll(
+                batcherTask,
+                Task.WhenAll(flushTasks)
+            );
+        }
+
+        // Worker que agrupa itens em batches
+        private async Task BatcherWorkerAsync()
+        {
+            var buffer = new List<object>(_batchSize);
+
+            await foreach (var item in _itemsChannel.Reader.ReadAllAsync())
+            {
+                buffer.Add(item);
+
+                if (buffer.Count >= _batchSize)
                 {
-                    await FlushAsync();
+                    await _batchesChannel.Writer.WriteAsync(buffer);
+                    buffer = new List<object>(_batchSize);
                 }
             }
 
-            // Flush final quando o canal é fechado
-            if (_buffer.Count > 0)
+            // Enfileira o último batch
+            if (buffer.Count > 0)
             {
-                await FlushAsync();
+                await _batchesChannel.Writer.WriteAsync(buffer);
+            }
+
+            _batchesChannel.Writer.Complete();
+        }
+
+        // Múltiplos workers que consomem batches do canal e enviam em paralelo
+        private async Task FlushWorkerAsync()
+        {
+            await foreach (var batch in _batchesChannel.Reader.ReadAllAsync())
+            {
+                await _throttler.ExecuteAsync(_partitionKey, batch.Count, async () =>
+                {
+                    await SendToTableStorage(_partitionKey, batch);
+                });
             }
         }
 
-        private async Task FlushAsync()
-        {
-            var batchToSend = _buffer.ToList(); // Copia o lote atual
-            _buffer.Clear();
-
-            // Aplica o Throttling (Hierárquico: Global + Partição)
-            await _throttler.ExecuteAsync(_partitionKey, batchToSend.Count, async () =>
-            {
-                // Sua lógica de TableTransactionAction aqui
-                await SendToTableStorage(_partitionKey, batchToSend);
-            });
-        }
-
-        private Task SendToTableStorage(string pk, List<object> data) => Task.CompletedTask; // Implementar
+        private async Task SendToTableStorage(string pk, List<object> data) => await Task.Delay(1000);//await Task.CompletedTask;
     }
 
     public class ShardingProcessor
     {
         private readonly ConcurrentDictionary<string, PartitionWorker> _workers = new();
         private readonly HierarchicalThrottler _throttler;
+        private readonly int _batchSize;
+        private readonly int _flushWorkerCount;
 
-        public ShardingProcessor(int globalLimit, int partitionLimit)
+        public ShardingProcessor(
+            int globalLimit, 
+            int partitionLimit,
+            int batchSize = 100,
+            int flushWorkerCount = 5)
         {
             _throttler = new HierarchicalThrottler(globalLimit, partitionLimit);
+            _batchSize = batchSize;
+            _flushWorkerCount = flushWorkerCount;
         }
 
         public async Task ProcessAsync(IEnumerable<Entity> dataSource)
@@ -87,28 +116,30 @@ namespace NextDnsBetBlocker.Worker.Importer
             // Producer
             foreach (var item in dataSource)
             {
-                string pk = item.PartitionKey; // Seu cálculo de Sharding
+                string pk = item.PartitionKey;
 
                 var worker = _workers.GetOrAdd(pk, key =>
                 {
-                    var newWorker = new PartitionWorker(key, _throttler);
-                    workerTasks.Add(newWorker.StartAsync()); // Inicia o consumer daquela partição
+                    var newWorker = new PartitionWorker(
+                        key, 
+                        _throttler, 
+                        _batchSize, 
+                        _flushWorkerCount);
+                    workerTasks.Add(newWorker.StartAsync());
                     return newWorker;
                 });
 
                 await worker.Writer.WriteAsync(item);
             }
 
-            // Finalização (Flush Global)
+            // Finalization
             foreach (var worker in _workers.Values)
             {
-                worker.Writer.Complete(); // Sinaliza para os consumers terminarem o que resta
+                worker.Writer.Complete();
             }
 
             await Task.WhenAll(workerTasks);
         }
-
-        //private string CalculateHash(object item) => "00"; // Sua lógica de hash
     }
 
     public class HierarchicalThrottler
@@ -119,18 +150,14 @@ namespace NextDnsBetBlocker.Worker.Importer
 
         public HierarchicalThrottler(int globalLimit, int partitionLimit)
         {
-            // Balde único para a conta toda (Global)
             _globalBucket = new TokenBucket(globalLimit);
             _maxPerPartition = partitionLimit;
         }
 
         public async Task ExecuteAsync(string partitionKey, int recordCount, Func<Task> callback)
         {
-            // 1. Obtém o balde da partição (ou cria um novo se não existir)
             var partitionBucket = _partitionBuckets.GetOrAdd(partitionKey, _ => new TokenBucket(_maxPerPartition));
 
-            // 2. Tenta consumir do limite Global e do limite da Partição simultaneamente
-            // A ordem aqui é importante para não "travar" tokens globais se a partição estiver cheia
             await Task.WhenAll(
                 _globalBucket.ConsumeAsync(recordCount),
                 partitionBucket.ConsumeAsync(recordCount)
@@ -140,16 +167,13 @@ namespace NextDnsBetBlocker.Worker.Importer
             {
                 await callback();
             }
-            finally
+            catch
             {
-                // Opcional: Se quiser uma limpeza de memória agressiva, 
-                // pode implementar um Timer que remove chaves antigas de _partitionBuckets
+                throw;
             }
         }
     }
 
-    // A classe TokenBucket permanece a mesma da resposta anterior, 
-    // pois ela já resolve o controle de tempo/créditos de forma eficiente.
     public class TokenBucket
     {
         private readonly double _capacity;
