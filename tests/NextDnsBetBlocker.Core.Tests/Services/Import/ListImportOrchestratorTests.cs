@@ -15,6 +15,7 @@ public class ListImportOrchestratorTests
     private readonly Mock<IImportMetricsCollector> _mockMetricsCollector;
     private readonly Mock<IImportRateLimiter> _mockRateLimiter;
     private readonly Mock<IPartitionKeyStrategy> _mockPartitionKeyStrategy;
+    private readonly Mock<IProgressReporter> _mockProgressReporter;
     private readonly ParallelImportConfig _parallelConfig;
     private readonly ListImportOrchestrator _orchestrator;
 
@@ -25,6 +26,7 @@ public class ListImportOrchestratorTests
         _mockMetricsCollector = new Mock<IImportMetricsCollector>();
         _mockRateLimiter = new Mock<IImportRateLimiter>();
         _mockPartitionKeyStrategy = new Mock<IPartitionKeyStrategy>();
+        _mockProgressReporter = new Mock<IProgressReporter>();
 
         _parallelConfig = new ParallelImportConfig
         {
@@ -61,6 +63,7 @@ public class ListImportOrchestratorTests
             _mockMetricsCollector.Object,
             _mockRateLimiter.Object,
             _mockPartitionKeyStrategy.Object,
+            _mockProgressReporter.Object,
             _parallelConfig);
     }
 

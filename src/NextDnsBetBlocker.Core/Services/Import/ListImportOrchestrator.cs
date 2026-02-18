@@ -25,6 +25,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
     private readonly IImportMetricsCollector _metricsCollector;
     private readonly IPartitionKeyStrategy _partitionKeyStrategy;
     private readonly IProgressReporter _progressReporter;
+    private readonly ParallelImportConfig _parallelConfig;
     private readonly IAsyncPolicy<BatchOperationResult> _resilientPolicy;
 
     public ListImportOrchestrator(
@@ -41,6 +42,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
         _metricsCollector = metricsCollector;
         _partitionKeyStrategy = partitionKeyStrategy;
         _progressReporter = progressReporter;
+        _parallelConfig = parallelConfig;
         _resilientPolicy = BuildResiliencePolicy();
     }
 
@@ -73,21 +75,21 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
             // Configuração de throttling (máximo do Table Storage)
             var throttlingConfig = new ThrottlingConfig(
-                GlobalLimitPerSecond: 10000,        // Limite global de todas as operações
-                PartitionLimitPerSecond: 1000);     // Limite por partição
+                GlobalLimitPerSecond: _parallelConfig.MaxOpsPerSecondGlobal,
+                PartitionLimitPerSecond: _parallelConfig.MaxOpsPerSecondPerPartition);
 
             // Configuração de processamento
             var processingConfig = new PartitionProcessingConfig(
-                BatchSize: 100,                      // Batches de 100 itens
-                FlushWorkerCount: 20);               // 20 workers simultâneos por partição
+                BatchSize: _parallelConfig.BatchSize,
+                FlushWorkerCount: _parallelConfig.FlushWorkerCount);
 
             // Configuração de degradação (opcional, para resiliência)
             var degradationConfig = new AdaptiveDegradationConfig(
-                Enabled: true,
-                DegradationPercentagePerError: 10,
-                MinimumDegradationPercentage: 80,
-                RecoveryIntervalSeconds: 60,
-                CircuitBreakerResetIntervalSeconds: 300);
+                Enabled: _parallelConfig.AdaptiveDegradationEnabled,
+                DegradationPercentagePerError: _parallelConfig.DegradationPercentagePerError,
+                MinimumDegradationPercentage: _parallelConfig.MinimumDegradationPercentage,
+                RecoveryIntervalSeconds: _parallelConfig.RecoveryIntervalSeconds,
+                CircuitBreakerResetIntervalSeconds: _parallelConfig.CircuitBreakerResetIntervalSeconds);
 
             // Função de armazenamento (Add ou Remove)
             BatchStorageOperation storageOperation = operationType == ImportOperationType.Add

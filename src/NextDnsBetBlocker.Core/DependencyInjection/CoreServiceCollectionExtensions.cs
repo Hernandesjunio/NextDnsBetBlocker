@@ -108,6 +108,10 @@ public static class CoreServiceCollectionExtensions
             .Bind(configuration.GetSection("ParallelImport"))
             .ValidateOnStart();
 
+        // Registrar ParallelImportConfig como singleton para injeção direta
+        services.AddSingleton(sp =>
+            sp.GetRequiredService<IOptions<ParallelImportConfig>>().Value);
+
         services.AddSingleton<ParallelImportConfig>(sp =>
             sp.GetRequiredService<IOptionsSnapshot<ParallelImportConfig>>().Value);
 

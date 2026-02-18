@@ -62,6 +62,16 @@ public class ParallelImportConfig
     public int MaxPartitionRetries { get; set; } = 5;
 
     /// <summary>
+    /// Tamanho dos batches para processamento
+    /// </summary>
+    public int BatchSize { get; set; } = 100;
+
+    /// <summary>
+    /// Número de workers de flush simultâneos por partição
+    /// </summary>
+    public int FlushWorkerCount { get; set; } = 20;
+
+    /// <summary>
     /// Timeout para envio de um batch
     /// Se exceder, cancela e tenta retry (Polly no Orchestrator)
     /// </summary>
@@ -71,4 +81,29 @@ public class ParallelImportConfig
     /// Intervalo em ms para report de progress
     /// </summary>
     public int ProgressReportIntervalMs { get; set; } = 5000;
+
+    /// <summary>
+    /// Percentual de degradação por erro (0-100)
+    /// </summary>
+    public int DegradationPercentagePerError { get; set; } = 10;
+
+    /// <summary>
+    /// Percentual mínimo de degradação (0-100)
+    /// </summary>
+    public int MinimumDegradationPercentage { get; set; } = 80;
+
+    /// <summary>
+    /// Intervalo de recuperação em segundos
+    /// </summary>
+    public int RecoveryIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Intervalo de reset do circuit breaker em segundos
+    /// </summary>
+    public int CircuitBreakerResetIntervalSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// Se a degradação adaptativa está habilitada
+    /// </summary>
+    public bool AdaptiveDegradationEnabled { get; set; } = true;
 }
