@@ -2,6 +2,7 @@ namespace NextDnsBetBlocker.Core;
 
 using System;
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 
 /// <summary>
 /// Rastreia o progresso de processamento do ShardingProcessor
