@@ -7,15 +7,15 @@ using Polly;
 using System.Diagnostics;
 
 /// <summary>
-/// Orquestrador da importação - versão simplificada
+/// Orquestrador da importação com ShardingProcessor
 /// Coordena inserção/deleção em paralelo de domínios já baixados
-/// Não mais usa Producer/Consumer - integra toda a lógica aqui
+/// Usa ShardingProcessor para rate limiting hierárquico e degradação adaptativa
 /// 
 /// Fluxo:
 /// 1. Recebe domínios já baixados (GenericListImporter faz download)
-/// 2. Cria DomainListEntry com PartitionKey
-/// 3. Enfileira em ParallelBatchManager
-/// 4. Executa Flush com operação apropriada (Add/Remove)
+/// 2. Cria Entity com PartitionKey (compatível com ShardingProcessor)
+/// 3. ShardingProcessor: batches + múltiplos flush workers por partição
+/// 4. Executa operação apropriada (Add/Remove) com Polly para resiliência
 /// 5. Retorna métricas consolidadas
 /// </summary>
 public class ListImportOrchestrator : IListImportOrchestrator
@@ -23,10 +23,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
     private readonly ILogger<ListImportOrchestrator> _logger;
     private readonly IListTableStorageRepository _tableRepository;
     private readonly IImportMetricsCollector _metricsCollector;
-    private readonly IImportRateLimiter _rateLimiter;
     private readonly IPartitionKeyStrategy _partitionKeyStrategy;
     private readonly IAsyncPolicy<BatchOperationResult> _resilientPolicy;
-    private readonly ParallelImportConfig _parallelConfig;
 
     public ListImportOrchestrator(
         ILogger<ListImportOrchestrator> logger,
@@ -39,14 +37,13 @@ public class ListImportOrchestrator : IListImportOrchestrator
         _logger = logger;
         _tableRepository = tableRepository;
         _metricsCollector = metricsCollector;
-        _rateLimiter = rateLimiter;
         _partitionKeyStrategy = partitionKeyStrategy;
-        _parallelConfig = parallelConfig ?? new ParallelImportConfig();
         _resilientPolicy = BuildResiliencePolicy();
     }
 
     /// <summary>
     /// Executa operação de importação com domínios já baixados
+    /// Usa ShardingProcessor para distribuição paralela com rate limiting hierárquico
     /// </summary>
     public async Task<ImportMetrics> ExecuteImportAsync(
         ListImportItemConfig config,
@@ -61,63 +58,103 @@ public class ListImportOrchestrator : IListImportOrchestrator
         try
         {
             _logger.LogInformation(
-                "Starting import orchestration for {ListName} into {TableName} | Operation: {OperationType} | MaxParallelism: {MaxParallelism}",
+                "Starting import orchestration for {ListName} into {TableName} | Operation: {OperationType}",
                 config.ListName,
                 config.TableName,
-                operationType,
-                _parallelConfig.MaxDegreeOfParallelism);
+                operationType);
 
             _metricsCollector.Reset();
 
             // Garantir que tabela existe
             await _tableRepository.EnsureTableExistsAsync(config.TableName, cancellationToken);
 
-            // Criar gerenciador paralelo
-            var batchManager = new ParallelBatchManager(_parallelConfig, new ParallelBatchManagerLogger(_logger));
+            // Configuração de throttling (máximo do Table Storage)
+            var throttlingConfig = new ThrottlingConfig(
+                GlobalLimitPerSecond: 20000,        // Limite global de todas as operações
+                PartitionLimitPerSecond: 2000);     // Limite por partição
 
-            try
+            // Configuração de processamento
+            var processingConfig = new PartitionProcessingConfig(
+                BatchSize: 100,                      // Batches de 100 itens
+                FlushWorkerCount: 20);               // 20 workers simultâneos por partição
+
+            // Configuração de degradação (opcional, para resiliência)
+            var degradationConfig = new AdaptiveDegradationConfig(
+                Enabled: true,
+                DegradationPercentagePerError: 10,
+                MinimumDegradationPercentage: 80,
+                RecoveryIntervalSeconds: 60,
+                CircuitBreakerResetIntervalSeconds: 300);
+
+            // Função de armazenamento (Add ou Remove)
+            BatchStorageOperation storageOperation = operationType == ImportOperationType.Add
+                ? (async (pk, batch) => await ExecuteAddBatchWithResilienceAsync(config.TableName, batch, cancellationToken))
+                : (async (pk, batch) => await ExecuteRemoveBatchWithResilienceAsync(config.TableName, batch, cancellationToken));
+
+            // Criar processor
+            var shardingProcessor = new ShardingProcessor(
+                throttlingConfig,
+                processingConfig,
+                storageOperation,
+                degradationConfig);
+
+            // Converter domínios para Entity
+            var entities = domains.Select(domain =>
             {
-                // Criar entries lazy a partir dos domínios
-                var entries = domains.Select(domain =>
+                _metricsCollector.RecordItemProcessed();
+                return new Entity
                 {
-                    _metricsCollector.RecordItemProcessed();
-                    return new DomainListEntry
-                    {
-                        PartitionKey = _partitionKeyStrategy.GetPartitionKey(domain),
-                        RowKey = domain,
-                        Timestamp = DateTime.UtcNow
-                    };
-                });
+                    PartitionKey = _partitionKeyStrategy.GetPartitionKey(domain),
+                    RowKey = domain
+                };
+            }).ToList();
 
-                var sendBatchFunc = operationType == ImportOperationType.Add
-                    ? (Func<List<DomainListEntry>, Task>)(batch => SendBatchAsync(batch, config.TableName, ImportOperationType.Add, cancellationToken))
-                    : (batch => SendBatchAsync(batch, config.TableName, ImportOperationType.Remove, cancellationToken));
+            itemCount = entities.Count;
 
-                // Producer e consumers rodam em paralelo — sem deadlock
-                await batchManager.ProduceAndConsumeAsync(entries, sendBatchFunc, cancellationToken);
+            // Processar com ShardingProcessor (batching + throttling + degradação adaptativa)
+            await shardingProcessor.ProcessAsync(entities);
 
-                itemCount = batchManager.GetTotalQueuedItems();
-                overallStopwatch.Stop();
+            // Obter métricas do ShardingProcessor
+            var processorMetrics = shardingProcessor.GetMetrics();
 
-                var finalMetrics = _metricsCollector.GetCurrentMetrics();
-                finalMetrics.Status = ImportStatus.Completed;
+            overallStopwatch.Stop();
 
-                _logger.LogInformation(
-                    "✓ Import orchestration completed for {ListName} | Total: {Processed:N0} | Inserted: {Inserted:N0} | Errors: {Errors} | Time: {Time} | Throughput: {Throughput:F0} ops/s",
-                    config.ListName,
-                    finalMetrics.TotalProcessed,
-                    finalMetrics.TotalInserted,
-                    finalMetrics.TotalErrors,
-                    FormatTimeSpan(overallStopwatch.Elapsed),
-                    itemCount > 0 ? itemCount / overallStopwatch.Elapsed.TotalSeconds : 0);
+            var finalMetrics = _metricsCollector.GetCurrentMetrics();
+            finalMetrics.Status = ImportStatus.Completed;
 
-                progress.Report(new ImportProgress { Metrics = finalMetrics });
-                return finalMetrics;
-            }
-            finally
+            // Log consolidado de métricas
+            _logger.LogInformation(
+                "✓ Import orchestration completed for {ListName} | Total: {Processed:N0} | Inserted: {Inserted:N0} | Errors: {Errors} | Time: {Time} | Throughput: {Throughput:F0} ops/s | Success Rate: {SuccessRate}%",
+                config.ListName,
+                finalMetrics.TotalProcessed,
+                finalMetrics.TotalInserted,
+                finalMetrics.TotalErrors,
+                FormatTimeSpan(overallStopwatch.Elapsed),
+                itemCount > 0 ? itemCount / overallStopwatch.Elapsed.TotalSeconds : 0,
+                processorMetrics.GlobalSuccessRate);
+
+            // Log de degradação e circuit breaker se houve
+            if (processorMetrics.TotalDegradationEvents > 0 || processorMetrics.TotalCircuitBreakerOpenings > 0)
             {
-                await batchManager.DisposeAsync();
+                _logger.LogWarning(
+                    "Import completed with degradation | Degradation events: {DegradationEvents} | Circuit breaker openings: {CircuitBreakerOpenings} | Partitions affected: {PartitionsWithIssues}",
+                    processorMetrics.TotalDegradationEvents,
+                    processorMetrics.TotalCircuitBreakerOpenings,
+                    processorMetrics.PartitionMetrics.Count(p => p.Value.DegradationCount > 0 || p.Value.IsCircuitBreakerOpen));
+
+                foreach (var partition in processorMetrics.PartitionMetrics.Where(p => p.Value.DegradationCount > 0 || p.Value.IsCircuitBreakerOpen))
+                {
+                    _logger.LogInformation(
+                        "Partition {PartitionKey}: Degradation={DegradationCount} | CircuitBreaker={IsOpen} | SuccessRate={SuccessRate}%",
+                        partition.Key,
+                        partition.Value.DegradationCount,
+                        partition.Value.IsCircuitBreakerOpen ? "OPEN" : "CLOSED",
+                        partition.Value.SuccessRate);
+                }
             }
+
+            progress.Report(new ImportProgress { Metrics = finalMetrics });
+            return finalMetrics;
         }
         catch (OperationCanceledException)
         {
@@ -156,14 +193,12 @@ public class ListImportOrchestrator : IListImportOrchestrator
     }
 
     /// <summary>
-    /// Enviar um batch para Table Storage (Add ou Remove)
-    /// Rate limiting é controlado pelo ParallelBatchManager (per-partition + global)
-    /// Polly cuida de retries rápidos para erros transientes
+    /// Executa operação Add com resiliência (Polly)
+    /// Converte Entity para DomainListEntry para compatibilidade com repositório
     /// </summary>
-    private async Task SendBatchAsync(
-        List<DomainListEntry> batch,
+    private async Task ExecuteAddBatchWithResilienceAsync(
         string tableName,
-        ImportOperationType operationType,
+        List<Entity> batch,
         CancellationToken cancellationToken)
     {
         if (batch is null || batch.Count == 0)
@@ -173,21 +208,17 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
         try
         {
-            BatchOperationResult result;
+            // Converter Entity para DomainListEntry para Table Storage
+            var domainEntries = batch.Select(e => new DomainListEntry
+            {
+                PartitionKey = e.PartitionKey,
+                RowKey = e.RowKey,
+                Timestamp = DateTime.UtcNow
+            }).ToList();
 
-            // Executar operação apropriada com resiliência (Polly)
-            if (operationType == ImportOperationType.Add)
-            {
-                result = await _resilientPolicy.ExecuteAsync(
-                    async (ct) => await _tableRepository.UpsertBatchAsync(tableName, batch, ct),
-                    cancellationToken);
-            }
-            else // Remove
-            {
-                result = await _resilientPolicy.ExecuteAsync(
-                    async (ct) => await _tableRepository.DeleteBatchAsync(tableName, batch, ct),
-                    cancellationToken);
-            }
+            var result = await _resilientPolicy.ExecuteAsync(
+                async (ct) => await _tableRepository.UpsertBatchAsync(tableName, domainEntries, ct),
+                cancellationToken);
 
             stopwatch.Stop();
 
@@ -199,25 +230,80 @@ public class ListImportOrchestrator : IListImportOrchestrator
             {
                 _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
                 _logger.LogWarning(
-                    "Batch {Operation} failed: {BatchId} | Partition: {Partition} | Errors: {Errors} | Message: {Message}",
-                    operationType,
+                    "Batch Add failed: {BatchId} | Partition: {Partition} | Errors: {Errors} | Message: {Message}",
                     result.BatchId,
                     batch.Count > 0 ? batch[0].PartitionKey : "unknown",
                     result.FailureCount,
                     result.ErrorMessage);
+                throw new InvalidOperationException($"Batch failed: {result.ErrorMessage}");
             }
         }
         catch (Exception ex)
         {
             stopwatch.Stop();
             _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
-
             _logger.LogError(
                 ex,
-                "Batch {Operation} execution failed for partition {Partition}",
-                operationType,
+                "Batch Add execution failed for partition {Partition}",
                 batch.Count > 0 ? batch[0].PartitionKey : "unknown");
+            throw;
+        }
+    }
 
+    /// <summary>
+    /// Executa operação Remove com resiliência (Polly)
+    /// Converte Entity para DomainListEntry para compatibilidade com repositório
+    /// </summary>
+    private async Task ExecuteRemoveBatchWithResilienceAsync(
+        string tableName,
+        List<Entity> batch,
+        CancellationToken cancellationToken)
+    {
+        if (batch is null || batch.Count == 0)
+            return;
+
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            // Converter Entity para DomainListEntry para Table Storage
+            var domainEntries = batch.Select(e => new DomainListEntry
+            {
+                PartitionKey = e.PartitionKey,
+                RowKey = e.RowKey,
+                Timestamp = DateTime.UtcNow
+            }).ToList();
+
+            var result = await _resilientPolicy.ExecuteAsync(
+                async (ct) => await _tableRepository.DeleteBatchAsync(tableName, domainEntries, ct),
+                cancellationToken);
+
+            stopwatch.Stop();
+
+            if (result.IsSuccess)
+            {
+                _metricsCollector.RecordBatchSuccess(batch.Count, stopwatch.ElapsedMilliseconds);
+            }
+            else
+            {
+                _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
+                _logger.LogWarning(
+                    "Batch Remove failed: {BatchId} | Partition: {Partition} | Errors: {Errors} | Message: {Message}",
+                    result.BatchId,
+                    batch.Count > 0 ? batch[0].PartitionKey : "unknown",
+                    result.FailureCount,
+                    result.ErrorMessage);
+                throw new InvalidOperationException($"Batch failed: {result.ErrorMessage}");
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _metricsCollector.RecordBatchFailure(batch.Count, stopwatch.ElapsedMilliseconds);
+            _logger.LogError(
+                ex,
+                "Batch Remove execution failed for partition {Partition}",
+                batch.Count > 0 ? batch[0].PartitionKey : "unknown");
             throw;
         }
     }

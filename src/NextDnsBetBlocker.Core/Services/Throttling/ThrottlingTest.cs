@@ -85,17 +85,20 @@ namespace NextDnsBetBlocker.Core
         private readonly Channel<List<Entity>> _batchesChannel;
         private readonly PartitionProcessingConfig _processingConfig;
         private readonly BatchStorageOperation _storageOperation;
+        private readonly ShardingProcessorMetrics _metrics;
 
         public PartitionWorker(
             string partitionKey, 
             HierarchicalThrottler throttler,
             PartitionProcessingConfig processingConfig,
-            BatchStorageOperation storageOperation)
+            BatchStorageOperation storageOperation,
+            ShardingProcessorMetrics metrics)
         {
             _partitionKey = partitionKey;
             _throttler = throttler;
             _processingConfig = processingConfig;
             _storageOperation = storageOperation ?? throw new ArgumentNullException(nameof(storageOperation));
+            _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
             _itemsChannel = Channel.CreateUnbounded<Entity>();
             _batchesChannel = Channel.CreateUnbounded<List<Entity>>();
         }
@@ -155,11 +158,15 @@ namespace NextDnsBetBlocker.Core
                     {
                         await _storageOperation(_partitionKey, batch);
                     });
-                    
+
+                    // Sucesso - registrar em métricas
+                    _metrics.RecordBatchProcessed(_partitionKey, batch.Count);
                     _throttler.RecordSuccess(_partitionKey);
                 }
                 catch (Exception ex)
                 {
+                    // Falha - registrar em métricas
+                    _metrics.RecordBatchFailed(_partitionKey, batch.Count);
                     _throttler.RecordError(_partitionKey, ex);
                     throw;
                 }
@@ -173,6 +180,7 @@ namespace NextDnsBetBlocker.Core
         private readonly HierarchicalThrottler _throttler;
         private readonly PartitionProcessingConfig _partitionProcessingConfig;
         private readonly BatchStorageOperation _storageOperation;
+        private readonly ShardingProcessorMetrics _metrics;
 
         public ShardingProcessor(
             ThrottlingConfig throttlingConfig,
@@ -183,15 +191,17 @@ namespace NextDnsBetBlocker.Core
             throttlingConfig = throttlingConfig ?? throw new ArgumentNullException(nameof(throttlingConfig));
             partitionProcessingConfig = partitionProcessingConfig ?? throw new ArgumentNullException(nameof(partitionProcessingConfig));
             storageOperation = storageOperation ?? throw new ArgumentNullException(nameof(storageOperation));
-            
+
             partitionProcessingConfig.Validate();
             degradationConfig?.Validate();
 
+            _metrics = new ShardingProcessorMetrics();
             _throttler = new HierarchicalThrottler(
                 throttlingConfig.GlobalLimitPerSecond, 
                 throttlingConfig.PartitionLimitPerSecond,
-                degradationConfig);
-            
+                degradationConfig,
+                _metrics);
+
             _partitionProcessingConfig = partitionProcessingConfig;
             _storageOperation = storageOperation;
         }
@@ -210,8 +220,9 @@ namespace NextDnsBetBlocker.Core
                         key, 
                         _throttler,
                         _partitionProcessingConfig,
-                        _storageOperation);
-                    
+                        _storageOperation,
+                        _metrics);
+
                     workerTasks.Add(newWorker.StartAsync());
                     return newWorker;
                 });
@@ -226,6 +237,14 @@ namespace NextDnsBetBlocker.Core
 
             await Task.WhenAll(workerTasks);
         }
+
+        /// <summary>
+        /// Obter métricas consolidadas
+        /// </summary>
+        public ShardingProcessorMetricsSummary GetMetrics()
+        {
+            return _metrics.GetSummary();
+        }
     }
 
     public class HierarchicalThrottler
@@ -235,16 +254,19 @@ namespace NextDnsBetBlocker.Core
         private readonly int _originalPartitionLimit;
         private readonly AdaptiveDegradationConfig _degradationConfig;
         private readonly ConcurrentDictionary<string, PartitionDegradationState> _degradationStates = new();
+        private readonly ShardingProcessorMetrics _metrics;
 
         public HierarchicalThrottler(
             int globalLimitPerSecond, 
             int partitionLimitPerSecond,
-            AdaptiveDegradationConfig? degradationConfig = null)
+            AdaptiveDegradationConfig? degradationConfig = null,
+            ShardingProcessorMetrics? metrics = null)
         {
             _globalBucket = new TokenBucket(globalLimitPerSecond);
             _originalPartitionLimit = partitionLimitPerSecond;
             _degradationConfig = degradationConfig ?? new AdaptiveDegradationConfig();
             _degradationConfig.Validate();
+            _metrics = metrics ?? new ShardingProcessorMetrics();
         }
 
         public CircuitBreakerState GetCircuitBreakerState(string partitionKey)
@@ -261,13 +283,14 @@ namespace NextDnsBetBlocker.Core
                 return;
 
             var state = _degradationStates.GetOrAdd(partitionKey, _ => new PartitionDegradationState());
-            
+
             if (state.CircuitBreakerState == CircuitBreakerState.Open)
             {
                 if (state.ShouldAttemptCircuitBreakerReset(_degradationConfig.CircuitBreakerResetIntervalSeconds))
                 {
                     state.ResetCircuitBreaker();
                     Console.WriteLine($"[CIRCUIT BREAKER RESET] Partição '{partitionKey}' tentando se recuperar.");
+                    _metrics.RecordCircuitBreakerReset(partitionKey);
                 }
                 else
                 {
@@ -283,6 +306,8 @@ namespace NextDnsBetBlocker.Core
             if (newLimit != previousLimit)
             {
                 Console.WriteLine($"[DEGRADATION] Partição '{partitionKey}': {previousLimit} → {newLimit} ops/seg");
+                int degradationPercentage = (newLimit * 100) / _originalPartitionLimit;
+                _metrics.RecordDegradation(partitionKey, degradationPercentage);
             }
 
             if (state.CurrentDegradedLimit <= _originalPartitionLimit * _degradationConfig.MinimumDegradationPercentage / 100)
@@ -291,6 +316,7 @@ namespace NextDnsBetBlocker.Core
                 {
                     state.OpenCircuitBreaker();
                     Console.WriteLine($"[CIRCUIT BREAKER OPENED] Partição '{partitionKey}' indisponível. Parando tentativas por {_degradationConfig.CircuitBreakerResetIntervalSeconds}s");
+                    _metrics.RecordCircuitBreakerOpening(partitionKey);
                 }
             }
         }
@@ -317,6 +343,14 @@ namespace NextDnsBetBlocker.Core
                 return _originalPartitionLimit;
 
             return state.CurrentDegradedLimit;
+        }
+
+        /// <summary>
+        /// Obter métricas consolidadas
+        /// </summary>
+        public ShardingProcessorMetricsSummary GetMetrics()
+        {
+            return _metrics.GetSummary();
         }
 
         public async Task ExecuteAsync(string partitionKey, int recordCount, Func<Task> callback)
