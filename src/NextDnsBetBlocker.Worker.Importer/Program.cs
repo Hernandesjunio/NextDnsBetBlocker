@@ -1,9 +1,10 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using NextDnsBetBlocker.Core;
 using NextDnsBetBlocker.Core.DependencyInjection;
-using NextDnsBetBlocker.Core.Models;
 using NextDnsBetBlocker.Core.Services.Import;
+using System.Diagnostics;
 
 /// <summary>
 /// NextDnsBetBlocker.Worker.Importer
@@ -18,6 +19,32 @@ using NextDnsBetBlocker.Core.Services.Import;
 /// 
 /// DI Registration: Centralizado em CoreServiceCollectionExtensions
 /// </summary>
+
+//while (true)
+//{
+//    List<Entity> list = new List<Entity>();
+//    var qtd = 100;
+//    for (int i = 0; i < qtd; i++)
+//    {
+//        list.AddRange(Enumerable.Range(1, 500000 / qtd).Select(c => new Entity { PartitionKey = i.ToString(), RowKey = $"rowkey" }));
+//    }
+
+//    ShardingProcessor shardingProcessor = new ShardingProcessor(
+//        new ThrottlingConfig(20000, 2000),
+//        new PartitionProcessingConfig(FlushWorkerCount: 20),
+//        storageOperation: async (pk, list) =>
+//        {
+//            await Task.Delay(100);
+//        });
+//    var watch = Stopwatch.StartNew();
+//    shardingProcessor.ProcessAsync(list).GetAwaiter().GetResult();
+//    watch.Stop();
+
+//    Console.WriteLine("");
+//}
+
+//return;
+
 
 var config = new ConfigurationBuilder()
     .SetBasePath(Directory.GetCurrentDirectory())
