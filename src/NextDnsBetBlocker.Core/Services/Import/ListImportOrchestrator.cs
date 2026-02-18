@@ -77,46 +77,26 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
             try
             {
-                // ✅ Fase 1: Enfileirar items (agrupados por partição)
-                _logger.LogInformation("[Phase 1] Queuing {OperationType} items...", operationType);
-
-                foreach (var domain in domains)
+                // Criar entries lazy a partir dos domínios
+                var entries = domains.Select(domain =>
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-
                     _metricsCollector.RecordItemProcessed();
-
-                    // Criar entrada para Table Storage
-                    var entry = new DomainListEntry
+                    return new DomainListEntry
                     {
                         PartitionKey = _partitionKeyStrategy.GetPartitionKey(domain),
                         RowKey = domain,
                         Timestamp = DateTime.UtcNow
                     };
+                });
 
-                    // Enfileirar no gerenciador paralelo
-                    batchManager.Enqueue(entry);
-                    itemCount++;
-
-                    // Report progress periodicamente
-                    if (itemCount % Math.Max(1000, itemCount / 100) == 0)
-                    {
-                        var currentMetrics = _metricsCollector.GetCurrentMetrics();
-                        progress.Report(new ImportProgress { Metrics = currentMetrics });
-                    }
-                }
-
-                _logger.LogInformation(
-                    "[Phase 1] Completed. Queued {Count:N0} items. Starting Phase 2: Parallel flush...",
-                    itemCount);
-
-                // ✅ Fase 2: Executar flush paralelo com operação apropriada
                 var sendBatchFunc = operationType == ImportOperationType.Add
                     ? (Func<List<DomainListEntry>, Task>)(batch => SendBatchAsync(batch, config.TableName, ImportOperationType.Add, cancellationToken))
                     : (batch => SendBatchAsync(batch, config.TableName, ImportOperationType.Remove, cancellationToken));
 
-                await batchManager.FlushAsync(sendBatchFunc, cancellationToken);
+                // Producer e consumers rodam em paralelo — sem deadlock
+                await batchManager.ProduceAndConsumeAsync(entries, sendBatchFunc, cancellationToken);
 
+                itemCount = batchManager.GetTotalQueuedItems();
                 overallStopwatch.Stop();
 
                 var finalMetrics = _metricsCollector.GetCurrentMetrics();
@@ -136,7 +116,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
             }
             finally
             {
-                batchManager.Dispose();
+                await batchManager.DisposeAsync();
             }
         }
         catch (OperationCanceledException)
@@ -177,6 +157,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
     /// <summary>
     /// Enviar um batch para Table Storage (Add ou Remove)
+    /// Rate limiting é controlado pelo ParallelBatchManager (per-partition + global)
+    /// Polly cuida de retries rápidos para erros transientes
     /// </summary>
     private async Task SendBatchAsync(
         List<DomainListEntry> batch,
@@ -184,11 +166,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
         ImportOperationType operationType,
         CancellationToken cancellationToken)
     {
-        if (batch == null || batch.Count == 0)
+        if (batch is null || batch.Count == 0)
             return;
-
-        // Rate limiting
-        await _rateLimiter.WaitAsync(batch.Count, cancellationToken);
 
         var stopwatch = Stopwatch.StartNew();
 

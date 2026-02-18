@@ -48,19 +48,10 @@ public class ImportListPipeline
                 "║    Starting Import Pipeline (ACI)      ║");
             _logger.LogInformation(
                 "╚════════════════════════════════════════╝");
-
-            var orderedConfigs = new[] { "HageziGambling", "TrancoList" };
-
-            foreach (var listName in orderedConfigs)
+                        
+            foreach (var config in _configs)
             {
-                var config = _configs.FirstOrDefault(c => 
-                    c.ListName.Equals(listName, StringComparison.OrdinalIgnoreCase));
-
-                if (config == null)
-                {
-                    _logger.LogWarning("Config not found for {ListName}, skipping", listName);
-                    continue;
-                }
+                var listName = config.ListName;
 
                 _logger.LogInformation(
                     "\n┌─────────────────────────────────────┐");

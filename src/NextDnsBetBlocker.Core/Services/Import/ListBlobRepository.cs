@@ -16,7 +16,7 @@ public class ListBlobRepository : IListBlobRepository
 {
     private readonly BlobContainerClient _containerClient;
     private readonly ILogger<ListBlobRepository> _logger;
-    private const string ContainerName = "tranco-lists";
+    private const string ContainerName = "imported-lists";
 
     public ListBlobRepository(
         IOptions<ListImportConfig> options,

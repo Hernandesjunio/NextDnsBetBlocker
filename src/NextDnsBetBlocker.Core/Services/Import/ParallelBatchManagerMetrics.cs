@@ -4,7 +4,7 @@ using System.Collections.Concurrent;
 
 /// <summary>
 /// Métricas do ParallelBatchManager
-/// Rastreia enfileiramento, distribuição de load e backpressure
+/// Rastreia enfileiramento, distribuição de load, backpressure, throttle e backoff
 /// </summary>
 public class ParallelBatchManagerMetrics
 {
@@ -13,24 +13,30 @@ public class ParallelBatchManagerMetrics
     private volatile int _totalBatchesCreated;
     private volatile int _maxQueueDepth;
     private volatile int _backpressureEvents;
+    private volatile int _totalThrottleDelays;
+    private volatile int _totalBackoffEvents;
+    private volatile int _totalRetriedBatches;
+    private volatile int _totalDroppedBatches;
 
     public class PartitionQueueMetrics
     {
-        // Usar volatile fields para thread-safety com Interlocked
         public volatile int ItemsEnqueued;
         public volatile int BatchesCreated;
         public volatile int CurrentQueueDepth;
         public volatile int MaxQueueDepthReached;
         public volatile int BackpressureCount;
+        public volatile int ThrottleDelayCount;
+        public volatile int BackoffCount;
+        public volatile int RetriedBatchCount;
+        public volatile int DroppedBatchCount;
+        public volatile int CurrentBackoffMs;
+        public volatile int BatchesSucceeded;
+        public volatile int BatchesFailed;
     }
 
     public ParallelBatchManagerMetrics()
     {
         _partitionMetrics = new ConcurrentDictionary<string, PartitionQueueMetrics>();
-        _totalItemsEnqueued = 0;
-        _totalBatchesCreated = 0;
-        _maxQueueDepth = 0;
-        _backpressureEvents = 0;
     }
 
     /// <summary>
@@ -54,7 +60,6 @@ public class ParallelBatchManagerMetrics
         var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
         Interlocked.Increment(ref metrics.BatchesCreated);
 
-        // Atualizar profundidade de fila
         if (queueDepth > metrics.MaxQueueDepthReached)
         {
             Interlocked.Exchange(ref metrics.MaxQueueDepthReached, queueDepth);
@@ -78,6 +83,78 @@ public class ParallelBatchManagerMetrics
     }
 
     /// <summary>
+    /// Registrar delay de throttle por rate limiting
+    /// </summary>
+    public void RecordThrottleDelay(string partitionKey)
+    {
+        Interlocked.Increment(ref _totalThrottleDelays);
+
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
+        Interlocked.Increment(ref metrics.ThrottleDelayCount);
+    }
+
+    /// <summary>
+    /// Registrar evento de backoff por erro/timeout na partição
+    /// </summary>
+    public void RecordPartitionBackoff(string partitionKey, int currentBackoffMs)
+    {
+        Interlocked.Increment(ref _totalBackoffEvents);
+
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
+        Interlocked.Increment(ref metrics.BackoffCount);
+        Interlocked.Exchange(ref metrics.CurrentBackoffMs, currentBackoffMs);
+    }
+
+    /// <summary>
+    /// Registrar batch retried (re-enfileirado após erro)
+    /// </summary>
+    public void RecordBatchRetried(string partitionKey)
+    {
+        Interlocked.Increment(ref _totalRetriedBatches);
+
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
+        Interlocked.Increment(ref metrics.RetriedBatchCount);
+    }
+
+    /// <summary>
+    /// Registrar batch descartado (exauriu retries)
+    /// </summary>
+    public void RecordBatchDropped(string partitionKey)
+    {
+        Interlocked.Increment(ref _totalDroppedBatches);
+
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
+        Interlocked.Increment(ref metrics.DroppedBatchCount);
+    }
+
+    /// <summary>
+    /// Registrar batch com sucesso na partição
+    /// </summary>
+    public void RecordBatchSucceeded(string partitionKey)
+    {
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
+        Interlocked.Increment(ref metrics.BatchesSucceeded);
+    }
+
+    /// <summary>
+    /// Registrar batch com falha na partição
+    /// </summary>
+    public void RecordBatchFailed(string partitionKey)
+    {
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
+        Interlocked.Increment(ref metrics.BatchesFailed);
+    }
+
+    /// <summary>
+    /// Resetar backoff de uma partição (após sucesso)
+    /// </summary>
+    public void ResetPartitionBackoff(string partitionKey)
+    {
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionQueueMetrics());
+        Interlocked.Exchange(ref metrics.CurrentBackoffMs, 0);
+    }
+
+    /// <summary>
     /// Atualizar profundidade atual de fila por partição
     /// </summary>
     public void UpdateQueueDepth(string partitionKey, int depth)
@@ -94,13 +171,18 @@ public class ParallelBatchManagerMetrics
     /// <summary>
     /// Obter métricas totais
     /// </summary>
-    public (int TotalEnqueued, int TotalBatches, int MaxQueueDepth, int BackpressureEvents) GetTotalMetrics()
+    public (int TotalEnqueued, int TotalBatches, int MaxQueueDepth, int BackpressureEvents,
+            int ThrottleDelays, int BackoffEvents, int RetriedBatches, int DroppedBatches) GetTotalMetrics()
     {
         return (
             _totalItemsEnqueued,
             _totalBatchesCreated,
             _maxQueueDepth,
-            _backpressureEvents
+            _backpressureEvents,
+            _totalThrottleDelays,
+            _totalBackoffEvents,
+            _totalRetriedBatches,
+            _totalDroppedBatches
         );
     }
 
@@ -171,12 +253,11 @@ public class ParallelBatchManagerMetrics
             percentages[kvp.Key] = (kvp.Value / (double)_totalItemsEnqueued) * 100;
         }
 
-        // Verificar se alguma partição tem mais de 60% ou menos de 40%
         var maxPercentage = percentages.Values.Max();
         var minPercentage = percentages.Values.Min();
         var imbalance = maxPercentage - minPercentage;
 
-        return imbalance > 20;  // Mais de 20% de diferença = desbalanceamento
+        return imbalance > 20;
     }
 
     /// <summary>
@@ -188,6 +269,20 @@ public class ParallelBatchManagerMetrics
         foreach (var kvp in _partitionMetrics)
         {
             stats[kvp.Key] = kvp.Value.BackpressureCount;
+        }
+        return stats;
+    }
+
+    /// <summary>
+    /// Obter estatísticas de backoff por partição
+    /// </summary>
+    public Dictionary<string, (int BackoffCount, int CurrentBackoffMs, int RetriedBatches, int DroppedBatches)> GetBackoffStats()
+    {
+        var stats = new Dictionary<string, (int, int, int, int)>();
+        foreach (var kvp in _partitionMetrics)
+        {
+            var m = kvp.Value;
+            stats[kvp.Key] = (m.BackoffCount, m.CurrentBackoffMs, m.RetriedBatchCount, m.DroppedBatchCount);
         }
         return stats;
     }

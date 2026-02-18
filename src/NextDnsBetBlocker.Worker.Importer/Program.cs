@@ -51,10 +51,6 @@ services.AddCoreServices(config, ServiceLayerType.Importer);
 // ============= PIPELINE & FACTORY =============
 services.AddSingleton<ImportListPipeline>();
 
-services.AddOptions<ListImportConfig>()
-    .Bind(config.GetSection("ListImport"))
-    .ValidateOnStart();
-
 // ============= BUILD SERVICE PROVIDER =============
 var serviceProvider = services.BuildServiceProvider();
 

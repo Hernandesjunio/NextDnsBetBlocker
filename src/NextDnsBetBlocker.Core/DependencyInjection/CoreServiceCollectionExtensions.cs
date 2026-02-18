@@ -141,12 +141,7 @@ public static class CoreServiceCollectionExtensions
         // ============= GENERIC LIST IMPORTER (as IListImporter) =============
         services.AddSingleton<IListImporter>(sp =>
             sp.GetRequiredService<GenericListImporter>());
-
-        // ============= HAGEZI LIST IMPORTER (with IOptions) =============
-        services.AddOptions<ListImportConfig>("Hagezi")
-            .Bind(configuration.GetSection("ListImport:Hagezi"))
-            .ValidateOnStart();
-
+               
         // ============= HAGEZI PROVIDER CONFIG (with IOptions) =============
         services.AddOptions<HageziProviderConfig>()
             .Bind(configuration.GetSection("HaGeZi"))
