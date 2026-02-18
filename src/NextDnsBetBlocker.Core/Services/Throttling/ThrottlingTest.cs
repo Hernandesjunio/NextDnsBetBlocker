@@ -36,10 +36,10 @@ namespace NextDnsBetBlocker.Core
     /// </summary>
     public record AdaptiveDegradationConfig(
         bool Enabled = true,
-        int DegradationPercentagePerError = 10,           // Reduz 10% a cada erro
-        int MinimumDegradationPercentage = 80,            // Não degrade abaixo de 80%
-        int RecoveryIntervalSeconds = 60,                 // Tenta recuperar a cada 60s
-        int CircuitBreakerResetIntervalSeconds = 300)     // Circuit breaker reseta após 5min
+        int DegradationPercentagePerError = 10,
+        int MinimumDegradationPercentage = 80,
+        int RecoveryIntervalSeconds = 60,
+        int CircuitBreakerResetIntervalSeconds = 300)
     {
         public void Validate()
         {
@@ -70,6 +70,13 @@ namespace NextDnsBetBlocker.Core
         Open,        // Falhou completamente (circuit breaker ativo)
     }
 
+    /// <summary>
+    /// Delegate para operações de armazenamento em lote
+    /// </summary>
+    /// <param name="partitionKey">Chave da partição</param>
+    /// <param name="batch">Lote de entidades para processar</param>
+    public delegate Task BatchStorageOperation(string partitionKey, List<Entity> batch);
+
     public class PartitionWorker
     {
         private readonly string _partitionKey;
@@ -77,15 +84,18 @@ namespace NextDnsBetBlocker.Core
         private readonly Channel<Entity> _itemsChannel;
         private readonly Channel<List<Entity>> _batchesChannel;
         private readonly PartitionProcessingConfig _processingConfig;
+        private readonly BatchStorageOperation _storageOperation;
 
         public PartitionWorker(
             string partitionKey, 
             HierarchicalThrottler throttler,
-            PartitionProcessingConfig processingConfig)
+            PartitionProcessingConfig processingConfig,
+            BatchStorageOperation storageOperation)
         {
             _partitionKey = partitionKey;
             _throttler = throttler;
             _processingConfig = processingConfig;
+            _storageOperation = storageOperation ?? throw new ArgumentNullException(nameof(storageOperation));
             _itemsChannel = Channel.CreateUnbounded<Entity>();
             _batchesChannel = Channel.CreateUnbounded<List<Entity>>();
         }
@@ -132,19 +142,18 @@ namespace NextDnsBetBlocker.Core
         {
             await foreach (var batch in _batchesChannel.Reader.ReadAllAsync())
             {
-                // Verifica se circuit breaker está aberto
                 var breaker = _throttler.GetCircuitBreakerState(_partitionKey);
                 if (breaker == CircuitBreakerState.Open)
                 {
                     Console.WriteLine($"[CIRCUIT BREAKER] Partição '{_partitionKey}' indisponível. Ignorando batch.");
-                    continue; // Pula este batch, não tenta mais
+                    continue;
                 }
 
                 try
                 {
                     await _throttler.ExecuteAsync(_partitionKey, batch.Count, async () =>
                     {
-                        await SendToTableStorage(_partitionKey, batch);
+                        await _storageOperation(_partitionKey, batch);
                     });
                     
                     _throttler.RecordSuccess(_partitionKey);
@@ -156,9 +165,6 @@ namespace NextDnsBetBlocker.Core
                 }
             }
         }
-
-        private async Task SendToTableStorage(string pk, List<Entity> data) 
-            => await Task.Delay(1000);
     }
 
     public class ShardingProcessor
@@ -166,14 +172,17 @@ namespace NextDnsBetBlocker.Core
         private readonly ConcurrentDictionary<string, PartitionWorker> _workers = new();
         private readonly HierarchicalThrottler _throttler;
         private readonly PartitionProcessingConfig _partitionProcessingConfig;
+        private readonly BatchStorageOperation _storageOperation;
 
         public ShardingProcessor(
             ThrottlingConfig throttlingConfig,
             PartitionProcessingConfig partitionProcessingConfig,
+            BatchStorageOperation storageOperation,
             AdaptiveDegradationConfig? degradationConfig = null)
         {
             throttlingConfig = throttlingConfig ?? throw new ArgumentNullException(nameof(throttlingConfig));
             partitionProcessingConfig = partitionProcessingConfig ?? throw new ArgumentNullException(nameof(partitionProcessingConfig));
+            storageOperation = storageOperation ?? throw new ArgumentNullException(nameof(storageOperation));
             
             partitionProcessingConfig.Validate();
             degradationConfig?.Validate();
@@ -184,6 +193,7 @@ namespace NextDnsBetBlocker.Core
                 degradationConfig);
             
             _partitionProcessingConfig = partitionProcessingConfig;
+            _storageOperation = storageOperation;
         }
 
         public async Task ProcessAsync(IEnumerable<Entity> dataSource)
@@ -199,7 +209,8 @@ namespace NextDnsBetBlocker.Core
                     var newWorker = new PartitionWorker(
                         key, 
                         _throttler,
-                        _partitionProcessingConfig);
+                        _partitionProcessingConfig,
+                        _storageOperation);
                     
                     workerTasks.Add(newWorker.StartAsync());
                     return newWorker;
@@ -253,7 +264,6 @@ namespace NextDnsBetBlocker.Core
             
             if (state.CircuitBreakerState == CircuitBreakerState.Open)
             {
-                // Tenta resetar o circuit breaker após intervalo
                 if (state.ShouldAttemptCircuitBreakerReset(_degradationConfig.CircuitBreakerResetIntervalSeconds))
                 {
                     state.ResetCircuitBreaker();
@@ -261,7 +271,7 @@ namespace NextDnsBetBlocker.Core
                 }
                 else
                 {
-                    return; // Não processa mais erros se circuit breaker está aberto
+                    return;
                 }
             }
 
@@ -275,7 +285,6 @@ namespace NextDnsBetBlocker.Core
                 Console.WriteLine($"[DEGRADATION] Partição '{partitionKey}': {previousLimit} → {newLimit} ops/seg");
             }
 
-            // Se atingiu o limite mínimo, ativa o circuit breaker
             if (state.CurrentDegradedLimit <= _originalPartitionLimit * _degradationConfig.MinimumDegradationPercentage / 100)
             {
                 if (state.CircuitBreakerState != CircuitBreakerState.Open)
@@ -293,7 +302,6 @@ namespace NextDnsBetBlocker.Core
 
             if (_degradationStates.TryGetValue(partitionKey, out var state))
             {
-                // Se degradado, tenta recuperação gradual
                 if (state.CurrentDegradedLimit < _originalPartitionLimit && 
                     state.ShouldAttemptRecovery(_degradationConfig.RecoveryIntervalSeconds))
                 {
@@ -341,9 +349,6 @@ namespace NextDnsBetBlocker.Core
         }
     }
 
-    /// <summary>
-    /// Rastreia estado de degradação e circuit breaker de uma partição
-    /// </summary>
     public class PartitionDegradationState
     {
         public int CurrentDegradedLimit { get; private set; }
@@ -358,9 +363,8 @@ namespace NextDnsBetBlocker.Core
             _lastErrorTime = DateTime.UtcNow;
 
             if (CircuitBreakerState == CircuitBreakerState.Open)
-                return; // Não processa mais erros
+                return;
 
-            // Calcula nova degradação
             int degradationReduction = originalLimit * config.DegradationPercentagePerError / 100;
             int minLimit = originalLimit * config.MinimumDegradationPercentage / 100;
             
@@ -398,7 +402,7 @@ namespace NextDnsBetBlocker.Core
         public void ResetCircuitBreaker()
         {
             CircuitBreakerState = CircuitBreakerState.Degraded;
-            CurrentDegradedLimit = 0; // Será recalculado
+            CurrentDegradedLimit = 0;
         }
     }
 
