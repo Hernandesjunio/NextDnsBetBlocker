@@ -1,11 +1,92 @@
 namespace NextDnsBetBlocker.Core.Models;
 
 /// <summary>
+/// Opções de throttling (rate limiting)
+/// </summary>
+public class ThrottlingOptions
+{
+    /// <summary>
+    /// Operações máximas por segundo GLOBAL (todas as partições)
+    /// Azure Table Storage: 20.000 entities/s por tabela (conta de storage)
+    /// </summary>
+    public int GlobalLimitPerSecond { get; set; } = 20000;
+
+    /// <summary>
+    /// Operações máximas por segundo POR PARTIÇÃO
+    /// Azure Table Storage: 2.000 entities/s por partition key
+    /// Safety net para garantir o limite mesmo com latência muito baixa
+    /// </summary>
+    public int PartitionLimitPerSecond { get; set; } = 2000;
+}
+
+/// <summary>
+/// Opções de processamento de partição
+/// </summary>
+public class PartitionProcessingOptions
+{
+    /// <summary>
+    /// Tamanho dos batches para processamento
+    /// </summary>
+    public int BatchSize { get; set; } = 100;
+
+    /// <summary>
+    /// Número de workers de flush simultâneos por partição
+    /// </summary>
+    public int FlushWorkerCount { get; set; } = 20;
+}
+
+/// <summary>
+/// Opções de degradação adaptativa com circuit breaker
+/// </summary>
+public class AdaptiveDegradationOptions
+{
+    /// <summary>
+    /// Se a degradação adaptativa está habilitada
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Percentual de degradação por erro (0-100)
+    /// </summary>
+    public int DegradationPercentagePerError { get; set; } = 10;
+
+    /// <summary>
+    /// Percentual mínimo de degradação (0-100)
+    /// </summary>
+    public int MinimumDegradationPercentage { get; set; } = 80;
+
+    /// <summary>
+    /// Intervalo de recuperação em segundos
+    /// </summary>
+    public int RecoveryIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Intervalo de reset do circuit breaker em segundos
+    /// </summary>
+    public int CircuitBreakerResetIntervalSeconds { get; set; } = 300;
+}
+
+/// <summary>
 /// Configurações para importação paralela com throttling por partição
 /// Azure Table Storage limits: 20k ops/s total, 2k ops/s por partição
 /// </summary>
 public class ParallelImportConfig
 {
+    /// <summary>
+    /// Configuração de throttling (rate limiting)
+    /// </summary>
+    public ThrottlingOptions Throttling { get; set; } = new();
+
+    /// <summary>
+    /// Configuração de processamento de partição
+    /// </summary>
+    public PartitionProcessingOptions PartitionProcessing { get; set; } = new();
+
+    /// <summary>
+    /// Configuração de degradação adaptativa
+    /// </summary>
+    public AdaptiveDegradationOptions AdaptiveDegradation { get; set; } = new();
+
     /// <summary>
     /// Grau máximo de paralelismo global (requests HTTP simultâneos)
     /// Controla o total de batches in-flight em TODAS as partições
@@ -20,19 +101,6 @@ public class ParallelImportConfig
     /// Default: 3 (otimizado para latência típica de Azure Table Storage)
     /// </summary>
     public int MaxConcurrencyPerPartition { get; set; } = 3;
-
-    /// <summary>
-    /// Operações máximas por segundo POR PARTIÇÃO
-    /// Azure Table Storage: 2.000 entities/s por partition key
-    /// Safety net para garantir o limite mesmo com latência muito baixa
-    /// </summary>
-    public int MaxOpsPerSecondPerPartition { get; set; } = 2000;
-
-    /// <summary>
-    /// Operações máximas por segundo GLOBAL (todas as partições)
-    /// Azure Table Storage: 20.000 entities/s por tabela (conta de storage)
-    /// </summary>
-    public int MaxOpsPerSecondGlobal { get; set; } = 20000;
 
     /// <summary>
     /// Capacidade do Channel bounded por partição (em batches)
@@ -62,16 +130,6 @@ public class ParallelImportConfig
     public int MaxPartitionRetries { get; set; } = 5;
 
     /// <summary>
-    /// Tamanho dos batches para processamento
-    /// </summary>
-    public int BatchSize { get; set; } = 100;
-
-    /// <summary>
-    /// Número de workers de flush simultâneos por partição
-    /// </summary>
-    public int FlushWorkerCount { get; set; } = 20;
-
-    /// <summary>
     /// Timeout para envio de um batch
     /// Se exceder, cancela e tenta retry (Polly no Orchestrator)
     /// </summary>
@@ -81,29 +139,4 @@ public class ParallelImportConfig
     /// Intervalo em ms para report de progress
     /// </summary>
     public int ProgressReportIntervalMs { get; set; } = 5000;
-
-    /// <summary>
-    /// Percentual de degradação por erro (0-100)
-    /// </summary>
-    public int DegradationPercentagePerError { get; set; } = 10;
-
-    /// <summary>
-    /// Percentual mínimo de degradação (0-100)
-    /// </summary>
-    public int MinimumDegradationPercentage { get; set; } = 80;
-
-    /// <summary>
-    /// Intervalo de recuperação em segundos
-    /// </summary>
-    public int RecoveryIntervalSeconds { get; set; } = 60;
-
-    /// <summary>
-    /// Intervalo de reset do circuit breaker em segundos
-    /// </summary>
-    public int CircuitBreakerResetIntervalSeconds { get; set; } = 300;
-
-    /// <summary>
-    /// Se a degradação adaptativa está habilitada
-    /// </summary>
-    public bool AdaptiveDegradationEnabled { get; set; } = true;
 }

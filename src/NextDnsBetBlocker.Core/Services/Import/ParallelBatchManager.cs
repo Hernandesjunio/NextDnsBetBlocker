@@ -146,7 +146,7 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
         _logger = logger;
         _partitionConsumers = new ConcurrentDictionary<string, PartitionConsumer>();
         _globalSemaphore = new SemaphoreSlim(_config.MaxDegreeOfParallelism, _config.MaxDegreeOfParallelism);
-        _globalRateLimiter = new SlidingWindowRateLimiter(_config.MaxOpsPerSecondGlobal);
+        _globalRateLimiter = new SlidingWindowRateLimiter(_config.Throttling.GlobalLimitPerSecond);
         _metrics = new ParallelBatchManagerMetrics();
         _consumerTasks = [];
         _currentBatches = new ConcurrentDictionary<string, List<DomainListEntry>>();
@@ -172,8 +172,8 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
             "[Pipeline] Starting produce/consume | Global concurrency: {MaxParallelism} | Per-partition concurrency: {PerPartition} | Rate limits: {GlobalRate} global, {PartitionRate}/partition ops/s",
             _config.MaxDegreeOfParallelism,
             _config.MaxConcurrencyPerPartition,
-            _config.MaxOpsPerSecondGlobal,
-            _config.MaxOpsPerSecondPerPartition);
+            _config.Throttling.GlobalLimitPerSecond,
+            _config.Throttling.PartitionLimitPerSecond);
 
         var progressStopwatch = Stopwatch.StartNew();
         using var progressCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -531,7 +531,7 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
                 key,
                 _config.ChannelCapacityPerPartition,
                 _config.MaxConcurrencyPerPartition,
-                _config.MaxOpsPerSecondPerPartition);
+                _config.Throttling.PartitionLimitPerSecond);
 
             // Stagger delay para dessincronizar consumers (0-100ms)
             var staggerMs = Random.Shared.Next(0, 100);

@@ -75,21 +75,21 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
             // Configuração de throttling (máximo do Table Storage)
             var throttlingConfig = new ThrottlingConfig(
-                GlobalLimitPerSecond: _parallelConfig.MaxOpsPerSecondGlobal,
-                PartitionLimitPerSecond: _parallelConfig.MaxOpsPerSecondPerPartition);
+                GlobalLimitPerSecond: _parallelConfig.Throttling.GlobalLimitPerSecond,
+                PartitionLimitPerSecond: _parallelConfig.Throttling.PartitionLimitPerSecond);
 
             // Configuração de processamento
             var processingConfig = new PartitionProcessingConfig(
-                BatchSize: _parallelConfig.BatchSize,
-                FlushWorkerCount: _parallelConfig.FlushWorkerCount);
+                BatchSize: _parallelConfig.PartitionProcessing.BatchSize,
+                FlushWorkerCount: _parallelConfig.PartitionProcessing.FlushWorkerCount);
 
             // Configuração de degradação (opcional, para resiliência)
             var degradationConfig = new AdaptiveDegradationConfig(
-                Enabled: _parallelConfig.AdaptiveDegradationEnabled,
-                DegradationPercentagePerError: _parallelConfig.DegradationPercentagePerError,
-                MinimumDegradationPercentage: _parallelConfig.MinimumDegradationPercentage,
-                RecoveryIntervalSeconds: _parallelConfig.RecoveryIntervalSeconds,
-                CircuitBreakerResetIntervalSeconds: _parallelConfig.CircuitBreakerResetIntervalSeconds);
+                Enabled: _parallelConfig.AdaptiveDegradation.Enabled,
+                DegradationPercentagePerError: _parallelConfig.AdaptiveDegradation.DegradationPercentagePerError,
+                MinimumDegradationPercentage: _parallelConfig.AdaptiveDegradation.MinimumDegradationPercentage,
+                RecoveryIntervalSeconds: _parallelConfig.AdaptiveDegradation.RecoveryIntervalSeconds,
+                CircuitBreakerResetIntervalSeconds: _parallelConfig.AdaptiveDegradation.CircuitBreakerResetIntervalSeconds);
 
             // Função de armazenamento (Add ou Remove)
             BatchStorageOperation storageOperation = operationType == ImportOperationType.Add
