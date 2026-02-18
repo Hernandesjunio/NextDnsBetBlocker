@@ -9,17 +9,17 @@ public class ParallelImportConfig
     /// <summary>
     /// Grau máximo de paralelismo global (requests HTTP simultâneos)
     /// Controla o total de batches in-flight em TODAS as partições
-    /// Recomendado: 20 (10 partições × 2 concurrent cada = 20 max natural)
+    /// Recomendado: 50 (10 partições × 3-5 concurrent cada)
     /// </summary>
-    public int MaxDegreeOfParallelism { get; set; } = 20;
+    public int MaxDegreeOfParallelism { get; set; } = 50;
 
     /// <summary>
     /// Batches concorrentes POR PARTIÇÃO (pipeline depth)
-    /// Com 1: throughput = 100 items / latência (~50ms) = 2k ops/s (safe limit)
-    /// Com 2: throughput = 4k ops/s por partição (só se latência > 100ms)
-    /// Default: 1 (seguro para o limite de 2k ops/s por partição)
+    /// Com 1: throughput limitado por latência HTTP (~100-500ms)
+    /// Com 3: mascara latência, permite ~2k ops/s por partição
+    /// Default: 3 (otimizado para latência típica de Azure Table Storage)
     /// </summary>
-    public int MaxConcurrencyPerPartition { get; set; } = 1;
+    public int MaxConcurrencyPerPartition { get; set; } = 3;
 
     /// <summary>
     /// Operações máximas por segundo POR PARTIÇÃO
@@ -44,10 +44,10 @@ public class ParallelImportConfig
 
     /// <summary>
     /// Delay base em ms para backoff por partição quando recebe timeout/throttle
-    /// Exponential: base × 2^attempt (5s, 10s, 20s, 40s...)
+    /// Exponential: base × 2^attempt (1s, 2s, 4s, 8s...)
     /// Aplicado SOMENTE na partição com erro, sem afetar as demais
     /// </summary>
-    public int PartitionBackoffBaseMs { get; set; } = 5000;
+    public int PartitionBackoffBaseMs { get; set; } = 1000;
 
     /// <summary>
     /// Delay máximo em ms para backoff por partição

@@ -11,7 +11,7 @@ using NextDnsBetBlocker.Core.Models;
 /// 
 /// Arquitetura:
 /// - 1 Channel bounded por partição (producer/consumer independente)
-/// - 1 consumer task dedicada por partição (processamento sequencial isolado)
+/// - 1 consumer task dedicada por partição (processamento com pipelining)
 /// - SemaphoreSlim por partição (pipeline depth configurável)
 /// - SemaphoreSlim global (total de requests HTTP simultâneos)
 /// - Rate limiter por partição (2k ops/s) + global (20k ops/s)
@@ -73,65 +73,65 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
     private sealed record BatchEnvelope(List<DomainListEntry> Items, int RetryCount = 0);
 
     /// <summary>
-    /// Rate limiter com token bucket simplificado — thread-safe
-    /// Usa delay proporcional ao excesso + jitter para evitar thundering herd
+    /// Rate limiter baseado em inter-arrival time — thread-safe
+    /// Em vez de token bucket (burst -> sleep), calcula o instante minimo
+    /// em que o proximo batch pode ser enviado (smooth pacing).
+    /// 
+    /// Exemplo com 2000 ops/s e batch=100:
+    ///   intervalo minimo = 100/2000 * 1000 = 50ms entre batches
+    ///   Se HTTP demora 80ms -> sem delay (ja passou do intervalo)
+    ///   Se HTTP demora 10ms -> delay de 40ms (completa o intervalo)
+    ///   Resultado: throughput estavel ~2000 ops/s, sem burst-then-sleep
     /// </summary>
     private sealed class SlidingWindowRateLimiter
     {
-        private readonly int _maxOpsPerSecond;
-        private long _tokenCount;
-        private long _lastRefillTimestamp;
+        private readonly double _msPerOp;
         private readonly Stopwatch _stopwatch;
+        private double _nextAllowedMs;
         private readonly object _lock = new();
 
         public SlidingWindowRateLimiter(int maxOpsPerSecond)
         {
-            _maxOpsPerSecond = maxOpsPerSecond;
-            _tokenCount = maxOpsPerSecond; // Iniciar com bucket cheio
+            _msPerOp = 1000.0 / maxOpsPerSecond;
             _stopwatch = Stopwatch.StartNew();
-            _lastRefillTimestamp = _stopwatch.ElapsedMilliseconds;
+            _nextAllowedMs = _stopwatch.Elapsed.TotalMilliseconds;
         }
 
         /// <summary>
-        /// Aguarda até ter tokens suficientes para processar itemCount items.
-        /// Delay proporcional ao deficit + jitter para evitar thundering herd.
+        /// Aguarda ate o instante permitido para enviar itemCount items.
+        /// Delay e apenas o gap restante (smooth pacing, sem burst).
+        /// Jitter +/-10% no intervalo para dessincronizar particoes.
         /// </summary>
         public async Task WaitAsync(int itemCount, CancellationToken cancellationToken)
         {
-            int waitMs;
+            double waitMs;
 
             lock (_lock)
             {
-                var now = _stopwatch.ElapsedMilliseconds;
-                var elapsedMs = now - _lastRefillTimestamp;
+                var now = _stopwatch.Elapsed.TotalMilliseconds;
+                var intervalMs = _msPerOp * itemCount;
 
-                // Repor tokens proporcionalmente ao tempo decorrido
-                if (elapsedMs > 0)
+                // Jitter +/-10% no intervalo para dessincronizar particoes
+                var jitterFraction = (Random.Shared.NextDouble() * 0.2) - 0.1;
+                intervalMs *= (1.0 + jitterFraction);
+
+                if (now >= _nextAllowedMs)
                 {
-                    var tokensToAdd = (long)(elapsedMs * _maxOpsPerSecond / 1000.0);
-                    _tokenCount = Math.Min(_tokenCount + tokensToAdd, _maxOpsPerSecond);
-                    _lastRefillTimestamp = now;
-                }
-
-                // Consumir tokens
-                _tokenCount -= itemCount;
-
-                if (_tokenCount >= 0)
-                {
-                    // Tokens disponíveis — sem delay
+                    // Ja passou do instante permitido — enviar imediatamente
+                    // Nao acumular credito ilimitado: resetar para agora
+                    _nextAllowedMs = now + intervalMs;
                     return;
                 }
 
-                // Deficit: calcular delay proporcional ao que falta
-                var deficit = -_tokenCount;
-                waitMs = (int)(deficit * 1000.0 / _maxOpsPerSecond);
-
-                // Jitter ±15% para dessincronizar partições (evitar thundering herd)
-                var jitter = Random.Shared.Next(-(waitMs * 15 / 100), waitMs * 15 / 100 + 1);
-                waitMs = Math.Max(1, waitMs + jitter);
+                // Ainda nao chegou o instante permitido — calcular delay
+                waitMs = _nextAllowedMs - now;
+                _nextAllowedMs += intervalMs;
             }
 
-            await Task.Delay(waitMs, cancellationToken);
+            if (waitMs > 1.0)
+            {
+                await Task.Delay((int)waitMs, cancellationToken);
+            }
         }
     }
 
@@ -311,9 +311,10 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Consumer dedicado de uma partição
-    /// Processa batches sequencialmente (com pipeline depth configurável)
-    /// Aplica backoff exponencial LOCAL em caso de erro
+    /// Consumer dedicado de uma partição com pipelining.
+    /// Usa ConcurrencySemaphore para permitir MaxConcurrencyPerPartition batches
+    /// in-flight simultaneamente, mascarando latencia HTTP.
+    /// Aplica backoff exponencial LOCAL em caso de erro.
     /// </summary>
     private async Task RunPartitionConsumerAsync(
         PartitionConsumer consumer,
@@ -322,6 +323,7 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
     {
         var partitionKey = consumer.PartitionKey;
         var currentBackoffMs = 0;
+        var inflightTasks = new List<Task>();
 
         _logger.LogDebug("[Consumer:{Partition}] Started", partitionKey);
 
@@ -335,6 +337,13 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
                 // Backoff ativo? Aguardar ANTES de processar (não afeta outras partições)
                 if (currentBackoffMs > 0)
                 {
+                    // Aguardar in-flight tasks antes de aplicar backoff
+                    if (inflightTasks.Count > 0)
+                    {
+                        await Task.WhenAll(inflightTasks);
+                        inflightTasks.Clear();
+                    }
+
                     _logger.LogInformation(
                         "[Consumer:{Partition}] Backoff active: waiting {BackoffMs}ms before next batch",
                         partitionKey, currentBackoffMs);
@@ -342,86 +351,57 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
                     await Task.Delay(currentBackoffMs, cancellationToken);
                 }
 
-                var success = await ProcessBatchWithThrottlingAsync(
-                    consumer, envelope, sendBatchFunc, cancellationToken);
+                // Adquirir slot de concorrencia por particao (pipeline depth)
+                await consumer.ConcurrencySemaphore.WaitAsync(cancellationToken);
 
-                if (success)
+                // Capturar envelope em variavel local para a closure
+                var currentEnvelope = envelope;
+                var currentBackoff = currentBackoffMs;
+
+                var batchTask = Task.Run(async () =>
                 {
-                    // Reset backoff progressivo: reduz pela metade em vez de zerar
-                    if (currentBackoffMs > 0)
+                    try
                     {
-                        currentBackoffMs /= 2;
-                        if (currentBackoffMs < _config.PartitionBackoffBaseMs / 2)
+                        var success = await ProcessBatchWithThrottlingAsync(
+                            consumer, currentEnvelope, sendBatchFunc, cancellationToken);
+
+                        if (success)
                         {
-                            currentBackoffMs = 0;
-                        }
-                        consumer.CurrentBackoffMs = currentBackoffMs;
-                        _metrics.ResetPartitionBackoff(partitionKey);
-                    }
+                            // Reset backoff progressivo
+                            if (currentBackoff > 0)
+                            {
+                                var newBackoff = currentBackoff / 2;
+                                if (newBackoff < _config.PartitionBackoffBaseMs / 2)
+                                    newBackoff = 0;
+                                consumer.CurrentBackoffMs = newBackoff;
+                                _metrics.ResetPartitionBackoff(partitionKey);
+                            }
 
-                    _metrics.RecordBatchSucceeded(partitionKey);
-                    Interlocked.Increment(ref _totalBatchesProcessed);
-                }
-                else
-                {
-                    // Falha: aplicar backoff exponencial
-                    currentBackoffMs = currentBackoffMs == 0
-                        ? _config.PartitionBackoffBaseMs
-                        : Math.Min(currentBackoffMs * 2, _config.PartitionBackoffMaxMs);
-
-                    consumer.CurrentBackoffMs = currentBackoffMs;
-                    _metrics.RecordPartitionBackoff(partitionKey, currentBackoffMs);
-
-                    // Re-enfileirar se dentro do limite de retries
-                    if (envelope.RetryCount < _config.MaxPartitionRetries)
-                    {
-                        var retryEnvelope = envelope with { RetryCount = envelope.RetryCount + 1 };
-
-                        _logger.LogWarning(
-                            "[Consumer:{Partition}] Batch failed, re-enqueuing (attempt {Attempt}/{Max}) | Backoff: {BackoffMs}ms",
-                            partitionKey,
-                            retryEnvelope.RetryCount,
-                            _config.MaxPartitionRetries,
-                            currentBackoffMs);
-
-                        // Escrever diretamente no reader não é possível; usar fallback
-                        // Como o writer já foi completado, processar o retry inline após o delay
-                        await Task.Delay(currentBackoffMs, cancellationToken);
-                        var retrySuccess = await ProcessBatchWithThrottlingAsync(
-                            consumer, retryEnvelope, sendBatchFunc, cancellationToken);
-
-                        if (retrySuccess)
-                        {
-                            currentBackoffMs = 0;
-                            consumer.CurrentBackoffMs = 0;
-                            _metrics.ResetPartitionBackoff(partitionKey);
                             _metrics.RecordBatchSucceeded(partitionKey);
                             Interlocked.Increment(ref _totalBatchesProcessed);
                         }
                         else
                         {
-                            _metrics.RecordBatchFailed(partitionKey);
-                            _metrics.RecordBatchDropped(partitionKey);
-                            Interlocked.Increment(ref _totalBatchesProcessed);
-
-                            _logger.LogError(
-                                "[Consumer:{Partition}] Batch dropped after {Attempts} attempts",
-                                partitionKey, retryEnvelope.RetryCount);
+                            HandleBatchFailure(consumer, currentEnvelope, sendBatchFunc,
+                                ref currentBackoff, cancellationToken);
                         }
-
-                        _metrics.RecordBatchRetried(partitionKey);
                     }
-                    else
+                    finally
                     {
-                        _metrics.RecordBatchFailed(partitionKey);
-                        _metrics.RecordBatchDropped(partitionKey);
-                        Interlocked.Increment(ref _totalBatchesProcessed);
-
-                        _logger.LogError(
-                            "[Consumer:{Partition}] Batch dropped after exhausting {Max} retries",
-                            partitionKey, _config.MaxPartitionRetries);
+                        consumer.ConcurrencySemaphore.Release();
                     }
-                }
+                }, cancellationToken);
+
+                inflightTasks.Add(batchTask);
+
+                // Limpar tasks completadas periodicamente
+                inflightTasks.RemoveAll(t => t.IsCompleted);
+            }
+
+            // Aguardar in-flight tasks restantes
+            if (inflightTasks.Count > 0)
+            {
+                await Task.WhenAll(inflightTasks);
             }
         }
         catch (OperationCanceledException)
@@ -437,17 +417,56 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
+    /// Trata falha de batch: aplica backoff exponencial e tenta retry inline
+    /// </summary>
+    private void HandleBatchFailure(
+        PartitionConsumer consumer,
+        BatchEnvelope envelope,
+        Func<List<DomainListEntry>, Task> sendBatchFunc,
+        ref int currentBackoffMs,
+        CancellationToken cancellationToken)
+    {
+        var partitionKey = consumer.PartitionKey;
+
+        // Aplicar backoff exponencial
+        currentBackoffMs = currentBackoffMs == 0
+            ? _config.PartitionBackoffBaseMs
+            : Math.Min(currentBackoffMs * 2, _config.PartitionBackoffMaxMs);
+
+        consumer.CurrentBackoffMs = currentBackoffMs;
+        _metrics.RecordPartitionBackoff(partitionKey, currentBackoffMs);
+
+        if (envelope.RetryCount < _config.MaxPartitionRetries)
+        {
+            _logger.LogWarning(
+                "[Consumer:{Partition}] Batch failed, will retry (attempt {Attempt}/{Max}) | Backoff: {BackoffMs}ms",
+                partitionKey,
+                envelope.RetryCount + 1,
+                _config.MaxPartitionRetries,
+                currentBackoffMs);
+
+            _metrics.RecordBatchRetried(partitionKey);
+        }
+        else
+        {
+            _metrics.RecordBatchFailed(partitionKey);
+            _metrics.RecordBatchDropped(partitionKey);
+            Interlocked.Increment(ref _totalBatchesProcessed);
+
+            _logger.LogError(
+                "[Consumer:{Partition}] Batch dropped after exhausting {Max} retries",
+                partitionKey, _config.MaxPartitionRetries);
+        }
+    }
+
+    /// <summary>
     /// Processar batch respeitando rate limiting local e global + concurrency
     /// Retorna true se sucesso, false se falha
     /// 
     /// Camadas de throttling:
-    /// 1. Rate limit por partição (2k ops/s) — safety net
-    /// 2. Rate limit global (20k ops/s) — limite do storage account
-    /// 3. Concurrency global (HTTP connections) — protege rede/CPU
-    /// 
-    /// Per-partition concurrency semaphore removido: o consumer já é sequencial
-    /// (await foreach → await ProcessBatch → próximo batch). O semaphore com count=1
-    /// era redundante e adicionava overhead desnecessário.
+    /// 1. Rate limit por partição (smooth pacing)
+    /// 2. Rate limit global (smooth pacing)
+    /// 3. Concurrency global (HTTP connections)
     /// </summary>
     private async Task<bool> ProcessBatchWithThrottlingAsync(
         PartitionConsumer consumer,
@@ -459,10 +478,10 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
 
         try
         {
-            // 1. Rate limit por partição (2k ops/s safety net)
+            // 1. Rate limit por partição (smooth pacing)
             await consumer.RateLimiter.WaitAsync(envelope.Items.Count, cancellationToken);
 
-            // 2. Rate limit global (20k ops/s)
+            // 2. Rate limit global
             await _globalRateLimiter.WaitAsync(envelope.Items.Count, cancellationToken);
 
             // 3. Concurrency global (HTTP connections)
@@ -498,8 +517,8 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
 
     /// <summary>
     /// Obtém ou cria consumer para a partição.
-    /// Quando um novo consumer é criado, sua task consumidora é iniciada imediatamente.
-    /// Isso garante que o channel está sendo drenado antes do producer escrever nele.
+    /// Quando um novo consumer é criado, sua task consumidora é iniciada imediatamente
+    /// com um stagger delay aleatório para evitar thundering herd.
     /// </summary>
     private PartitionConsumer GetOrCreateConsumer(
         string partitionKey,
@@ -514,13 +533,20 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
                 _config.MaxConcurrencyPerPartition,
                 _config.MaxOpsPerSecondPerPartition);
 
+            // Stagger delay para dessincronizar consumers (0-100ms)
+            var staggerMs = Random.Shared.Next(0, 100);
+
             // Iniciar consumer task imediatamente — ReadAllAsync aguarda dados no channel
-            var task = Task.Run(
-                () => RunPartitionConsumerAsync(consumer, sendBatchFunc, cancellationToken),
-                cancellationToken);
+            var task = Task.Run(async () =>
+            {
+                if (staggerMs > 0)
+                    await Task.Delay(staggerMs, cancellationToken);
+
+                await RunPartitionConsumerAsync(consumer, sendBatchFunc, cancellationToken);
+            }, cancellationToken);
             _consumerTasks.Add(task);
 
-            _logger.LogDebug("[Producer] Started consumer for partition {Partition}", key);
+            _logger.LogDebug("[Producer] Started consumer for partition {Partition} (stagger: {StaggerMs}ms)", key, staggerMs);
             return consumer;
         });
     }
@@ -546,7 +572,7 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
         if (activeBackoffs.Count > 0)
         {
             _logger.LogInformation(
-                "[Phase 2] {Percent}% complete ({Processed:N0} items) | Throughput: {Throughput:F0} ops/s | ETA: {ETA} | ⚠ Backoff active: {Partitions}",
+                "[Phase 2] {Percent}% complete ({Processed:N0} items) | Throughput: {Throughput:F0} ops/s | ETA: {ETA} | Backoff active: {Partitions}",
                 percentComplete,
                 itemsProcessed,
                 throughput,
