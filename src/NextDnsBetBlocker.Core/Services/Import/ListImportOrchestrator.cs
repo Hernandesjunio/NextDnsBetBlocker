@@ -111,7 +111,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
             itemCount = entities.Count;
 
-            // Processar com ShardingProcessor (batching + throttling + degradação adaptativa)
+            // Processar com ShardingProcessor (batching + throttling + degradação adaptativa + progresso)
             await shardingProcessor.ProcessAsync(entities);
 
             // Obter métricas do ShardingProcessor
