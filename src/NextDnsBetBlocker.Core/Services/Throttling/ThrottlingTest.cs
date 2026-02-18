@@ -194,15 +194,16 @@ namespace NextDnsBetBlocker.Core
         private readonly PartitionProcessingConfig _partitionProcessingConfig;
         private readonly BatchStorageOperation _storageOperation;
         private readonly ShardingProcessorMetrics _metrics;
-        private IProgressReporter? _progressReporter;
+        private IProgressReporter _progressReporter;
         private ShardingProcessorProgress? _progress;
 
         public ShardingProcessor(
             ThrottlingConfig throttlingConfig,
             PartitionProcessingConfig partitionProcessingConfig,
             BatchStorageOperation storageOperation,
-            AdaptiveDegradationConfig? degradationConfig = null,
-            IProgressReporter? progressReporter = null)
+            IProgressReporter progressReporter,
+            AdaptiveDegradationConfig? degradationConfig = null
+            )
         {
             throttlingConfig = throttlingConfig ?? throw new ArgumentNullException(nameof(throttlingConfig));
             partitionProcessingConfig = partitionProcessingConfig ?? throw new ArgumentNullException(nameof(partitionProcessingConfig));

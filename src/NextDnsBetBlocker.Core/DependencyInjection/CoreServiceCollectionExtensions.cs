@@ -69,6 +69,7 @@ public static class CoreServiceCollectionExtensions
         // ============= CHECKPOINT STORE (Shared) =============
         services.AddSingleton<ICheckpointStore, CheckpointStore>();
 
+        services.AddScoped<IProgressReporter, LoggingProgressReporter>();
 
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
         services.AddSingleton<IStorageInfrastructureInitializer, StorageInfrastructureInitializer>();

@@ -24,6 +24,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
     private readonly IListTableStorageRepository _tableRepository;
     private readonly IImportMetricsCollector _metricsCollector;
     private readonly IPartitionKeyStrategy _partitionKeyStrategy;
+    private readonly IProgressReporter _progressReporter;
     private readonly IAsyncPolicy<BatchOperationResult> _resilientPolicy;
 
     public ListImportOrchestrator(
@@ -32,12 +33,14 @@ public class ListImportOrchestrator : IListImportOrchestrator
         IImportMetricsCollector metricsCollector,
         IImportRateLimiter rateLimiter,
         IPartitionKeyStrategy partitionKeyStrategy,
+        IProgressReporter progressReporter,
         ParallelImportConfig parallelConfig)
     {
         _logger = logger;
         _tableRepository = tableRepository;
         _metricsCollector = metricsCollector;
         _partitionKeyStrategy = partitionKeyStrategy;
+        _progressReporter = progressReporter;
         _resilientPolicy = BuildResiliencePolicy();
     }
 
@@ -96,6 +99,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
                 throttlingConfig,
                 processingConfig,
                 storageOperation,
+                _progressReporter,
                 degradationConfig);
 
             // Converter domínios para Entity
