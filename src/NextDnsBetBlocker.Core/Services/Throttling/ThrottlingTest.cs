@@ -86,19 +86,25 @@ namespace NextDnsBetBlocker.Core
         private readonly PartitionProcessingConfig _processingConfig;
         private readonly BatchStorageOperation _storageOperation;
         private readonly ShardingProcessorMetrics _metrics;
+        private readonly ShardingProcessorProgress? _progress;
+        private readonly IProgressReporter? _progressReporter;
 
         public PartitionWorker(
             string partitionKey, 
             HierarchicalThrottler throttler,
             PartitionProcessingConfig processingConfig,
             BatchStorageOperation storageOperation,
-            ShardingProcessorMetrics metrics)
+            ShardingProcessorMetrics metrics,
+            ShardingProcessorProgress? progress = null,
+            IProgressReporter? progressReporter = null)
         {
             _partitionKey = partitionKey;
             _throttler = throttler;
             _processingConfig = processingConfig;
             _storageOperation = storageOperation ?? throw new ArgumentNullException(nameof(storageOperation));
             _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
+            _progress = progress;
+            _progressReporter = progressReporter;
             _itemsChannel = Channel.CreateUnbounded<Entity>();
             _batchesChannel = Channel.CreateUnbounded<List<Entity>>();
         }
@@ -162,6 +168,13 @@ namespace NextDnsBetBlocker.Core
                     // Sucesso - registrar em métricas
                     _metrics.RecordBatchProcessed(_partitionKey, batch.Count);
                     _throttler.RecordSuccess(_partitionKey);
+
+                    // Reportar progresso
+                    _progress?.ReportProgress(batch.Count);
+                    if (_progress != null && _progressReporter != null)
+                    {
+                        _progressReporter.Report(_progress.GetCurrentProgress());
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -181,12 +194,15 @@ namespace NextDnsBetBlocker.Core
         private readonly PartitionProcessingConfig _partitionProcessingConfig;
         private readonly BatchStorageOperation _storageOperation;
         private readonly ShardingProcessorMetrics _metrics;
+        private IProgressReporter? _progressReporter;
+        private ShardingProcessorProgress? _progress;
 
         public ShardingProcessor(
             ThrottlingConfig throttlingConfig,
             PartitionProcessingConfig partitionProcessingConfig,
             BatchStorageOperation storageOperation,
-            AdaptiveDegradationConfig? degradationConfig = null)
+            AdaptiveDegradationConfig? degradationConfig = null,
+            IProgressReporter? progressReporter = null)
         {
             throttlingConfig = throttlingConfig ?? throw new ArgumentNullException(nameof(throttlingConfig));
             partitionProcessingConfig = partitionProcessingConfig ?? throw new ArgumentNullException(nameof(partitionProcessingConfig));
@@ -204,13 +220,31 @@ namespace NextDnsBetBlocker.Core
 
             _partitionProcessingConfig = partitionProcessingConfig;
             _storageOperation = storageOperation;
+            _progressReporter = progressReporter;
+        }
+
+        /// <summary>
+        /// Definir reporter de progresso
+        /// </summary>
+        public void SetProgressReporter(IProgressReporter progressReporter)
+        {
+            _progressReporter = progressReporter ?? throw new ArgumentNullException(nameof(progressReporter));
         }
 
         public async Task ProcessAsync(IEnumerable<Entity> dataSource)
         {
+            var sourceList = dataSource.ToList();
+            _progress = new ShardingProcessorProgress(sourceList.Count);
+
+            // Hook progress events to reporter
+            if (_progressReporter != null)
+            {
+                _progress.ProgressChanged += args => _progressReporter.Report(args);
+            }
+
             var workerTasks = new List<Task>();
 
-            foreach (var item in dataSource)
+            foreach (var item in sourceList)
             {
                 string pk = item.PartitionKey;
 
@@ -221,7 +255,9 @@ namespace NextDnsBetBlocker.Core
                         _throttler,
                         _partitionProcessingConfig,
                         _storageOperation,
-                        _metrics);
+                        _metrics,
+                        _progress,
+                        _progressReporter);
 
                     workerTasks.Add(newWorker.StartAsync());
                     return newWorker;
@@ -236,6 +272,13 @@ namespace NextDnsBetBlocker.Core
             }
 
             await Task.WhenAll(workerTasks);
+
+            // Finalize progress
+            if (_progress != null)
+            {
+                var finalProgress = _progress.Finalize();
+                _progressReporter?.Report(finalProgress);
+            }
         }
 
         /// <summary>

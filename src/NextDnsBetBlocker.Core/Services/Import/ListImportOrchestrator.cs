@@ -70,8 +70,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
             // Configuração de throttling (máximo do Table Storage)
             var throttlingConfig = new ThrottlingConfig(
-                GlobalLimitPerSecond: 20000,        // Limite global de todas as operações
-                PartitionLimitPerSecond: 2000);     // Limite por partição
+                GlobalLimitPerSecond: 10000,        // Limite global de todas as operações
+                PartitionLimitPerSecond: 1000);     // Limite por partição
 
             // Configuração de processamento
             var processingConfig = new PartitionProcessingConfig(
