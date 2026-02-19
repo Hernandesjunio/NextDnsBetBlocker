@@ -75,6 +75,7 @@ public class HttpDownloadService : IDownloadService
 
     /// <summary>
     /// Baixar e fazer parse de uma única fonte com retry automático.
+    /// Usa streaming para minimizar o consumo de memória.
     /// </summary>
     private async Task<HashSet<string>> DownloadAndParseFromSourceAsync(
         string sourceUrl,
@@ -89,10 +90,13 @@ public class HttpDownloadService : IDownloadService
             try
             {
                 using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                var content = await httpClient.GetStringAsync(sourceUrl, cancellationToken);
 
-                // Parse domínios
-                foreach (var line in content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                // Usar streaming para reduzir consumo de memória
+                using var stream = await httpClient.GetStreamAsync(sourceUrl, cancellationToken);
+                using var reader = new System.IO.StreamReader(stream, System.Text.Encoding.UTF8);
+
+                string? line;
+                while ((line = await reader.ReadLineAsync(cancellationToken)) != null)
                 {
                     var trimmed = line.Trim();
 
@@ -138,6 +142,8 @@ public class HttpDownloadService : IDownloadService
                     {
                         domains.Add(domain.ToLowerInvariant());
                     }
+
+                    // Linha processada e descartada automaticamente (garbage collection)
                 }
 
                 return domains; // Sucesso
