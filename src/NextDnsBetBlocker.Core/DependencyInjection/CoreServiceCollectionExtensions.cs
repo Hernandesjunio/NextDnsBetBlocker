@@ -11,6 +11,7 @@ using NextDnsBetBlocker.Core.Models;
 using NextDnsBetBlocker.Core.Services;
 using NextDnsBetBlocker.Core.Services.Import;
 using NextDnsBetBlocker.Core.Services.Storage;
+using NextDnsBetBlocker.Core.Services.Synchronization;
 
 /// <summary>
 /// Centraliza registro de DI para todas as camadas (Importer e Analysis)
@@ -56,6 +57,7 @@ public static class CoreServiceCollectionExtensions
         IServiceCollection services,
         IConfiguration configuration)
     {
+        services.AddSingleton<IListTableStorageRepository, ListTableStorageRepository>();
         services.AddSingleton<IPartitionKeyStrategy>(sp => new PartitionKeyStrategy(10));
         services.AddSingleton<IListTableProvider, ListTableProvider>();
         services.AddSingleton(c => new TableServiceClient(c.GetRequiredService<IOptions<WorkerSettings>>().Value.AzureStorageConnectionString));
@@ -68,6 +70,15 @@ public static class CoreServiceCollectionExtensions
 
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
         services.AddSingleton<IStorageInfrastructureInitializer, StorageInfrastructureInitializer>();
+
+        // ============= DISTRIBUTED LOCK PROVIDER =============
+        services.AddSingleton<IDistributedLockProvider>(sp =>
+        {
+            var blobServiceClient = sp.GetRequiredService<BlobServiceClient>();
+            var containerClient = blobServiceClient.GetBlobContainerClient("function-locks");
+            var logger = sp.GetRequiredService<ILogger<BlobStorageDistributedLock>>();
+            return new BlobStorageDistributedLock(containerClient, logger);
+        });
     }
 
     /// <summary>
@@ -127,8 +138,7 @@ public static class CoreServiceCollectionExtensions
 
 
         // ============= STORAGE REPOSITORIES =============
-        services.AddSingleton<IListTableStorageRepository, ListTableStorageRepository>();
-
+        
         services.AddSingleton<IListBlobRepository, ListBlobRepository>();
 
         // ============= TRANCO ALLOW LIST PROVIDER =============
