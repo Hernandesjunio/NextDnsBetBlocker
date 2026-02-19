@@ -6,44 +6,6 @@ using NextDnsBetBlocker.Core.DependencyInjection;
 using NextDnsBetBlocker.Core.Services.Import;
 using System.Diagnostics;
 
-/// <summary>
-/// NextDnsBetBlocker.Worker.Importer
-/// 
-/// Console App que roda APENAS UMA VEZ (via ACI)
-/// Executa importação sequencial: Hagezi → Tranco → Encerra
-/// 
-/// Frequency: 1x/semana (domingo 00:00)
-/// Orquestração: Azure Scheduler → ACI
-/// Duration: ~15 min
-/// Custo: ~R$ 1.20/mês
-/// 
-/// DI Registration: Centralizado em CoreServiceCollectionExtensions
-/// </summary>
-
-//while (true)
-//{
-//    List<Entity> list = new List<Entity>();
-//    var qtd = 100;
-//    for (int i = 0; i < qtd; i++)
-//    {
-//        list.AddRange(Enumerable.Range(1, 500000 / qtd).Select(c => new Entity { PartitionKey = i.ToString(), RowKey = $"rowkey" }));
-//    }
-
-//    ShardingProcessor shardingProcessor = new ShardingProcessor(
-//        new ThrottlingConfig(20000, 2000),
-//        new PartitionProcessingConfig(FlushWorkerCount: 20),
-//        storageOperation: async (pk, list) =>
-//        {
-//            await Task.Delay(100);
-//        });
-//    var watch = Stopwatch.StartNew();
-//    shardingProcessor.ProcessAsync(list).GetAwaiter().GetResult();
-//    watch.Stop();
-
-//    Console.WriteLine("");
-//}
-
-//return;
 
 
 var config = new ConfigurationBuilder()

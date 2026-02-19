@@ -2,7 +2,6 @@ namespace NextDnsBetBlocker.Core.DependencyInjection;
 
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -11,7 +10,6 @@ using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 using NextDnsBetBlocker.Core.Services;
 using NextDnsBetBlocker.Core.Services.Import;
-using NextDnsBetBlocker.Core.Services.Queue;
 using NextDnsBetBlocker.Core.Services.Storage;
 
 /// <summary>
@@ -204,8 +202,7 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IAnalysisConsumer, AnalysisConsumer>();
 
         // ============= QUEUE PUBLISHER FOR ANALYSIS =============
-        services.AddSingleton<ISuspectDomainQueuePublisher, SuspectDomainQueuePublisher>();
-
+        
         // ============= BET BLOCKER PIPELINE =============
         services.AddSingleton<IBetBlockerPipeline, BetBlockerPipeline>();
 
