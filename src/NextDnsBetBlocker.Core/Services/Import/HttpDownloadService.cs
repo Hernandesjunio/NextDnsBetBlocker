@@ -6,10 +6,12 @@ using NextDnsBetBlocker.Core.Interfaces;
 /// <summary>
 /// Implementação de download via HTTP para domínios.
 /// Suporta URLs HTTP/HTTPS com retry automático.
+/// Usa IHttpClientFactory para reuso de conexões e connection pooling.
 /// </summary>
 public class HttpDownloadService : IDownloadService
 {
     private readonly ILogger<HttpDownloadService> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
     private static readonly System.Text.RegularExpressions.Regex CommentLineRegex = 
         new(@"^[#!;]", System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -26,9 +28,12 @@ public class HttpDownloadService : IDownloadService
         new(@"^(\*\.)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    public HttpDownloadService(ILogger<HttpDownloadService> logger)
+    public HttpDownloadService(
+        ILogger<HttpDownloadService> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -89,7 +94,8 @@ public class HttpDownloadService : IDownloadService
         {
             try
             {
-                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                // Usar factory para obter HttpClient com connection pooling automático
+                using var httpClient = _httpClientFactory.CreateClient("HttpDownloadService");
 
                 // Usar streaming para reduzir consumo de memória
                 using var stream = await httpClient.GetStreamAsync(sourceUrl, cancellationToken);

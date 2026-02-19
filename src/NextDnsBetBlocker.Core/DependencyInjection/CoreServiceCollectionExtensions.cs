@@ -77,6 +77,13 @@ public static class CoreServiceCollectionExtensions
         IServiceCollection services,
         IConfiguration configuration)
     {
+        // ============= HTTP CLIENTS =============
+        services.AddHttpClient("HttpDownloadService")
+            .ConfigureHttpClient(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(30);
+            });
+
         // ============= IMPORT INFRASTRUCTURE =============
         services.AddSingleton<IImportMetricsCollector, ImportMetricsCollector>();
 
