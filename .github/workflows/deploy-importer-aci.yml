@@ -1,0 +1,59 @@
+name: Deploy Importer to ACI
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t nextdns-importer:${{ github.sha }} \
+            -t nextdns-importer:latest \
+            -f src/NextDnsBetBlocker.Worker.Importer/Dockerfile \
+            .
+      
+      - name: Deploy to ACI
+        run: |
+          az container create \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name nextdns-importer \
+            --image nextdns-importer:latest \
+            --registry-login-server ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }} \
+            --registry-username ${{ secrets.AZURE_REGISTRY_USERNAME }} \
+            --registry-password ${{ secrets.AZURE_REGISTRY_PASSWORD }} \
+            --environment-variables \
+              ListImport__AzureStorageConnectionString="${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
+            --restart-policy Never \
+            --cpu 2 \
+            --memory 4 \
+            --no-wait
+      
+      - name: Log deployment
+        run: |
+          echo "Importer deployed to ACI"
+          echo "Container: nextdns-importer"
+          echo "Timestamp: $(date)"
