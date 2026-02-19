@@ -12,6 +12,7 @@ var config = new ConfigurationBuilder()
     .SetBasePath(Directory.GetCurrentDirectory())
     .AddJsonFile("appsettings.json", optional: false)
     .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development"}.json", optional: true)
+    .AddUserSecrets("NextDnsBetBlocker.Worker.Importer")
     .AddEnvironmentVariables()
     .Build();
 

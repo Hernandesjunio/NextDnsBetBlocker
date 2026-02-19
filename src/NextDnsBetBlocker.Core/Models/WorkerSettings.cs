@@ -14,10 +14,9 @@ public class WorkerSettings
 
     // Azure Storage Configuration
     public string AzureStorageConnectionString { get; set; } = string.Empty;
-    public bool UseBlobStorage { get; set; } = false;
+   
     
     // Processing Configuration
     public int ProcessingIntervalSeconds { get; set; } = 1800;
-    public int HageziRefreshIntervalHours { get; set; } = 24;
-    public int RateLimitPerSecond { get; set; } = 5;
+    
 }

@@ -59,29 +59,4 @@ public class WorkerService : BackgroundService
             _logger.LogDebug("ProcessLogs task cancelled");
         }
     }
-
-    [Obsolete("This method is deprecated. The HaGeZi list is now updated automatically on a daily schedule. Manual refresh is no longer necessary.", true)]
-    private async Task UpdateHageziPeriodicAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromHours(_settings.HageziRefreshIntervalHours));
-
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-            {
-                try
-                {
-                    await _pipeline.UpdateHageziAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error refreshing HaGeZi");
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            _logger.LogDebug("UpdateHaGeZi task cancelled");
-        }
-    }
 }
