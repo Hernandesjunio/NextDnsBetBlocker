@@ -42,7 +42,7 @@ public static class Program
                     .AddEnvironmentVariables();
             })
             .ConfigureServices((context, services) =>
-            {                
+            {
                 // ============= CENTRALIZED CORE DI =============
                 // All dependency injection is now in CoreServiceCollectionExtensions
                 services.AddCoreServices(context.Configuration, ServiceLayerType.Analysis);
@@ -82,7 +82,7 @@ public static class Program
         // ============= SEED CHECKPOINT DATA =============
         if (_checkpointTableClient != null)
         {
-            await SeedCheckpointAsync(_checkpointTableClient);
+            await SeedCheckpointAsync(_checkpointTableClient, host.Services);
         }
 
         // ============= INITIALIZE GAMBLING SUSPECTS TABLE =============
@@ -102,18 +102,21 @@ public static class Program
         await host.RunAsync();
     }
 
-    private static async Task SeedCheckpointAsync(TableClient checkpointTableClient)
+    private static async Task SeedCheckpointAsync(TableClient checkpointTableClient, IServiceProvider serviceProvider)
     {
+        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+        var nextDnsProfileId = configuration["WorkerSettings:NextDnsProfileId"];
+
         try
         {
-            var response = await checkpointTableClient.GetEntityAsync<TableEntity>("checkpoint", "71cb47");
+            var response = await checkpointTableClient.GetEntityAsync<TableEntity>("checkpoint", nextDnsProfileId);
             // Entity exists, no need to seed
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
             // Entity doesn't exist, create it with a default timestamp
             var defaultTimestamp = DateTime.UtcNow.AddDays(-1);
-            var entity = new TableEntity("checkpoint", "71cb47")
+            var entity = new TableEntity("checkpoint", nextDnsProfileId)
             {
                 { "LastTimestamp", defaultTimestamp }
             };
