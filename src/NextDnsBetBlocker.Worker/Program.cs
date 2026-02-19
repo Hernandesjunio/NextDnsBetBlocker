@@ -31,21 +31,18 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
-        var config = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development"}.json", optional: true)
-            .AddUserSecrets("NextDnsBetBlocker.Worker")
-            .AddEnvironmentVariables()
-            .Build();
-
         var host = new HostBuilder()
             .ConfigureAppConfiguration((context, configBuilder) =>
             {
-                configBuilder.AddConfiguration(config);
+                configBuilder
+                    .SetBasePath(Directory.GetCurrentDirectory())
+                    .AddJsonFile("appsettings.json", optional: true)
+                    .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true)
+                    .AddUserSecrets("0ff93d8b-998c-49a6-b6c7-b487f46e236f")
+                    .AddEnvironmentVariables();
             })
             .ConfigureServices((context, services) =>
-            {
+            {                
                 // ============= CENTRALIZED CORE DI =============
                 // All dependency injection is now in CoreServiceCollectionExtensions
                 services.AddCoreServices(context.Configuration, ServiceLayerType.Analysis);
@@ -58,8 +55,7 @@ public static class Program
                 // ============= WORKER-SPECIFIC SERVICES =============
                 services.AddSingleton<BlockedDomainsSeeder>();
                 services.AddSingleton<WorkerService>();
-                services.AddSingleton<IHostedService,WorkerService>();
-
+                services.AddSingleton<IHostedService, WorkerService>();
             })
             .ConfigureLogging((context, logging) =>
             {
@@ -74,15 +70,15 @@ public static class Program
             })
             .Build();
 
-        var settings = host.Services.GetRequiredService<IOptions<WorkerSettings>>().Value; ;
+        var settings = host.Services.GetRequiredService<IOptions<WorkerSettings>>().Value;
 
         // Store checkpoint client for seeding                
         if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
         {
             var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
             _checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
-
         }
+
         // ============= SEED CHECKPOINT DATA =============
         if (_checkpointTableClient != null)
         {
