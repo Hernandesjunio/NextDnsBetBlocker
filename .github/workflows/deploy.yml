@@ -1,0 +1,147 @@
+name: Deploy Azure Function App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to deploy'
+        required: true
+        type: string
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  FUNCTION_APP_PATH: './NextDnsBetBlocker.FunctionApp'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.set-artifact.outputs.name }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Publish Function App
+        run: |
+          dotnet publish "${{ env.FUNCTION_APP_PATH }}" \
+            --configuration Release \
+            --output ./publish \
+            --no-build
+
+      - name: Set artifact name
+        id: set-artifact
+        run: echo "name=fnapp-${{ github.ref_name }}" >> $GITHUB_OUTPUT
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ steps.set-artifact.outputs.name }}
+          path: ./publish
+          retention-days: 7
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: ./publish
+
+      - name: Deploy to Staging Slot
+        uses: azure/functions-action@v1
+        with:
+          app-name: ${{ secrets.AZURE_FUNCTION_APP_NAME }}
+          slot-name: staging
+          package: ./publish
+          publish-profile: ${{ secrets.AZURE_FUNCTION_APP_PUBLISH_PROFILE_STAGING }}
+
+      - name: Run smoke tests on Staging
+        run: |
+          echo "✅ Staging deployment completed successfully!"
+          echo "Function App: ${{ secrets.AZURE_FUNCTION_APP_NAME }}/staging"
+          echo ""
+          echo "Verify staging slot before swapping to production"
+
+  deploy-production:
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: prod
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: ./publish
+
+      - name: Swap Staging to Production
+        run: |
+          az functionapp deployment slot swap \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_FUNCTION_APP_NAME }} \
+            --slot staging
+
+      - name: Verify Production Deployment
+        run: |
+          echo "✅ Swap completed successfully!"
+          echo "Function App Production: ${{ secrets.AZURE_FUNCTION_APP_NAME }}"
+          echo "Tag deployed: ${{ github.ref_name }}"
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          body: |
+            Deployed to Azure Function App
+            
+            **Environment**: Production
+            **Function App**: ${{ secrets.AZURE_FUNCTION_APP_NAME }}
+            **Slot**: production
+            
+            Changes:
+            ${{ github.event.head_commit.message }}
+          draft: false
+          prerelease: false

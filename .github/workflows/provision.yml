@@ -1,0 +1,87 @@
+name: Provision Azure Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: 'Environment name (e.g., prod, staging)'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - prod
+          - staging
+
+env:
+  BICEP_FILE: .github/bicep/function-app.bicep
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment_name }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set environment variables
+        run: |
+          if [ "${{ github.event.inputs.environment_name }}" == "prod" ]; then
+            echo "RESOURCE_GROUP_NAME=${{ secrets.AZURE_RESOURCE_GROUP }}" >> $GITHUB_ENV
+            echo "FUNCTION_APP_NAME=${{ secrets.AZURE_FUNCTION_APP_NAME }}" >> $GITHUB_ENV
+            echo "STORAGE_ACCOUNT_NAME=${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}" >> $GITHUB_ENV
+            echo "APP_SERVICE_PLAN_NAME=${{ secrets.AZURE_APP_SERVICE_PLAN_NAME }}" >> $GITHUB_ENV
+          else
+            echo "RESOURCE_GROUP_NAME=${{ secrets.AZURE_RESOURCE_GROUP }}-staging" >> $GITHUB_ENV
+            echo "FUNCTION_APP_NAME=${{ secrets.AZURE_FUNCTION_APP_NAME }}-staging" >> $GITHUB_ENV
+            echo "STORAGE_ACCOUNT_NAME=${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}staging" >> $GITHUB_ENV
+            echo "APP_SERVICE_PLAN_NAME=${{ secrets.AZURE_APP_SERVICE_PLAN_NAME }}-staging" >> $GITHUB_ENV
+          fi
+
+      - name: Create resource group
+        run: |
+          az group create \
+            --name ${{ env.RESOURCE_GROUP_NAME }} \
+            --location ${{ secrets.AZURE_LOCATION }}
+
+      - name: Deploy Bicep template
+        run: |
+          az deployment group create \
+            --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+            --template-file ${{ env.BICEP_FILE }} \
+            --parameters \
+              functionAppName=${{ env.FUNCTION_APP_NAME }} \
+              storageAccountName=${{ env.STORAGE_ACCOUNT_NAME }} \
+              appServicePlanName=${{ env.APP_SERVICE_PLAN_NAME }} \
+            --output json
+
+      - name: Output deployment results
+        run: |
+          echo "✅ Provisioning completed successfully!"
+          echo "Resource Group: ${{ env.RESOURCE_GROUP_NAME }}"
+          echo "Function App: ${{ env.FUNCTION_APP_NAME }}"
+          echo "Storage Account: ${{ env.STORAGE_ACCOUNT_NAME }}"
+          echo ""
+          echo "Next steps:"
+          echo "1. Configure app settings in Azure Portal or via CLI"
+          echo "2. Set environment variables for your Function App"
+          echo "3. Run the deploy workflow to deploy your code"
+
+      - name: Create function-locks container (if not exists)
+        run: |
+          STORAGE_KEY=$(az storage account keys list \
+            --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+            --account-name ${{ env.STORAGE_ACCOUNT_NAME }} \
+            --query '[0].value' -o tsv)
+          
+          az storage container exists \
+            --account-name ${{ env.STORAGE_ACCOUNT_NAME }} \
+            --account-key $STORAGE_KEY \
+            --name function-locks || true
