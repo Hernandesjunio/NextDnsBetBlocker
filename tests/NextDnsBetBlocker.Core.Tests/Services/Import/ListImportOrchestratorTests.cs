@@ -1,10 +1,10 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Moq;
 using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
 using NextDnsBetBlocker.Core.Services.Import;
 using Xunit;
-using Microsoft.Extensions.Logging;
 
 namespace NextDnsBetBlocker.Core.Tests.Services.Import;
 
@@ -16,6 +16,7 @@ public class ListImportOrchestratorTests
     private readonly Mock<IImportRateLimiter> _mockRateLimiter;
     private readonly Mock<IPartitionKeyStrategy> _mockPartitionKeyStrategy;
     private readonly Mock<IProgressReporter> _mockProgressReporter;
+    private readonly Mock<ILoggerFactory> _loggerFactory;
     private readonly ParallelImportConfig _parallelConfig;
     private readonly ListImportOrchestrator _orchestrator;
 
@@ -27,7 +28,7 @@ public class ListImportOrchestratorTests
         _mockRateLimiter = new Mock<IImportRateLimiter>();
         _mockPartitionKeyStrategy = new Mock<IPartitionKeyStrategy>();
         _mockProgressReporter = new Mock<IProgressReporter>();
-
+        _loggerFactory = new Mock<ILoggerFactory>();
         _parallelConfig = new ParallelImportConfig
         {
             MaxDegreeOfParallelism = 4
@@ -64,6 +65,7 @@ public class ListImportOrchestratorTests
             _mockRateLimiter.Object,
             _mockPartitionKeyStrategy.Object,
             _mockProgressReporter.Object,
+            _loggerFactory.Object,
             _parallelConfig);
     }
 

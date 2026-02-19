@@ -202,6 +202,7 @@ namespace NextDnsBetBlocker.Core
             PartitionProcessingConfig partitionProcessingConfig,
             BatchStorageOperation storageOperation,
             IProgressReporter progressReporter,
+            ILoggerFactory loggerFactory,
             AdaptiveDegradationConfig? degradationConfig = null
             )
         {
@@ -216,6 +217,7 @@ namespace NextDnsBetBlocker.Core
             _throttler = new HierarchicalThrottler(
                 throttlingConfig.GlobalLimitPerSecond, 
                 throttlingConfig.PartitionLimitPerSecond,
+                loggerFactory.CreateLogger<HierarchicalThrottler>(),
                 degradationConfig,
                 _metrics);
 
@@ -301,12 +303,13 @@ namespace NextDnsBetBlocker.Core
         private readonly ShardingProcessorMetrics _metrics;
         private readonly ILogger<HierarchicalThrottler> _logger;
 
+        
         public HierarchicalThrottler(
             int globalLimitPerSecond, 
             int partitionLimitPerSecond,
+            ILogger<HierarchicalThrottler> logger,
             AdaptiveDegradationConfig? degradationConfig = null,
-            ShardingProcessorMetrics? metrics = null,
-            ILogger<HierarchicalThrottler>? logger = null)
+            ShardingProcessorMetrics? metrics = null)
         {
             _globalBucket = new TokenBucket(globalLimitPerSecond);
             _originalPartitionLimit = partitionLimitPerSecond;

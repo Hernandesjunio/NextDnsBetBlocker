@@ -25,6 +25,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
     private readonly IImportMetricsCollector _metricsCollector;
     private readonly IPartitionKeyStrategy _partitionKeyStrategy;
     private readonly IProgressReporter _progressReporter;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ParallelImportConfig _parallelConfig;
     private readonly IAsyncPolicy<BatchOperationResult> _resilientPolicy;
 
@@ -35,6 +36,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
         IImportRateLimiter rateLimiter,
         IPartitionKeyStrategy partitionKeyStrategy,
         IProgressReporter progressReporter,
+        ILoggerFactory loggerFactory,
         ParallelImportConfig parallelConfig)
     {
         _logger = logger;
@@ -42,6 +44,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
         _metricsCollector = metricsCollector;
         _partitionKeyStrategy = partitionKeyStrategy;
         _progressReporter = progressReporter;
+        _loggerFactory = loggerFactory;
         _parallelConfig = parallelConfig;
         _resilientPolicy = BuildResiliencePolicy();
     }
@@ -54,7 +57,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
         ListImportItemConfig config,
         ImportOperationType operationType,
         IEnumerable<string> domains,
-        IProgress<ImportProgress> progress,
+        IProgress<ImportProgress> progress,        
         CancellationToken cancellationToken)
     {
         var overallStopwatch = Stopwatch.StartNew();
@@ -102,6 +105,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
                 processingConfig,
                 storageOperation,
                 _progressReporter,
+                _loggerFactory,
                 degradationConfig);
 
             // Converter domínios para Entity
