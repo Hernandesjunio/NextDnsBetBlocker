@@ -10,6 +10,21 @@ using NextDnsBetBlocker.Core.Interfaces;
 public class HttpDownloadService : IDownloadService
 {
     private readonly ILogger<HttpDownloadService> _logger;
+    private static readonly System.Text.RegularExpressions.Regex CommentLineRegex = 
+        new(@"^[#!;]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static readonly System.Text.RegularExpressions.Regex LocalFormatRegex =
+        new(@"local=/([^/]+)/", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static readonly System.Text.RegularExpressions.Regex AdblockPlusRegex =
+        new(@"\|\|(.+)\^$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static readonly System.Text.RegularExpressions.Regex CnameFormatRegex =
+        new(@"^(\*\.)?([a-zA-Z0-9.-]+)\s+CNAME\s+\.$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static readonly System.Text.RegularExpressions.Regex DomainValidationRegex =
+        new(@"^(\*\.)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
 
     public HttpDownloadService(ILogger<HttpDownloadService> logger)
     {
@@ -82,15 +97,44 @@ public class HttpDownloadService : IDownloadService
                     var trimmed = line.Trim();
 
                     // Ignorar linhas vazias e comentários
-                    if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("#"))
+                    if (string.IsNullOrEmpty(trimmed) || CommentLineRegex.IsMatch(trimmed))
                         continue;
 
-                    // Suportar formatos: "domínio" ou "rank,domínio" (Tranco)
-                    var domain = trimmed.Contains(',')
-                        ? trimmed.Split(',')[1].Trim()
-                        : trimmed;
+                    string domain;
 
-                    if (!string.IsNullOrWhiteSpace(domain))
+                    // Suportar formato: "local=/domínio/"
+                    if (trimmed.StartsWith("local=/"))
+                    {
+                        var match = LocalFormatRegex.Match(trimmed);
+                        if (!match.Success)
+                            continue;
+                        domain = match.Groups[1].Value;
+                    }
+                    // Suportar formato Adblock Plus: "||domínio^"
+                    else if (trimmed.StartsWith("||") && trimmed.EndsWith("^"))
+                    {
+                        var match = AdblockPlusRegex.Match(trimmed);
+                        if (!match.Success)
+                            continue;
+                        domain = match.Groups[1].Value;
+                    }
+                    // Suportar formato DNS CNAME: "1xbet.ac CNAME ." ou "*.1xbet.ac CNAME ."
+                    else if (trimmed.Contains(" CNAME "))
+                    {
+                        var match = CnameFormatRegex.Match(trimmed);
+                        if (!match.Success)
+                            continue;
+                        domain = match.Groups[2].Value;
+                    }
+                    // Suportar formatos: "domínio" ou "rank,domínio" (Tranco)
+                    else
+                    {
+                        domain = trimmed.Contains(',')
+                            ? trimmed.Split(',')[1].Trim()
+                            : trimmed;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(domain) && IsValidDomain(domain))
                     {
                         domains.Add(domain.ToLowerInvariant());
                     }
@@ -116,5 +160,17 @@ public class HttpDownloadService : IDownloadService
         }
 
         throw new InvalidOperationException($"Failed to download from {sourceUrl}");
+    }
+
+    /// <summary>
+    /// Valida se é um domínio válido conforme RFC 1123, com suporte opcional para wildcard.
+    /// Aceita: exemplo.com, sub.exemplo.com, *.exemplo.com, *.sub.exemplo.com
+    /// </summary>
+    private static bool IsValidDomain(string domain)
+    {
+        if (string.IsNullOrWhiteSpace(domain) || domain.Length > 253)
+            return false;
+
+        return DomainValidationRegex.IsMatch(domain);
     }
 }
