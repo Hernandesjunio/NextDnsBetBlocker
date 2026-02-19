@@ -3,6 +3,7 @@ namespace NextDnsBetBlocker.Core.Interfaces;
 using System.Threading.Channels;
 using NextDnsBetBlocker.Core.Models;
 
+[Obsolete("This interface is not used in the current implementation. Use ILogsProducer instead.", false)]
 public interface INextDnsClient
 {
     /// <summary>
@@ -28,6 +29,7 @@ public interface INextDnsClient
     Task<bool> AddToAllowlistAsync(string profileId, string domain);
 }
 
+[Obsolete("This interface is not used in the current implementation.", false)]
 public interface ICheckpointStore
 {
     /// <summary>
@@ -41,6 +43,7 @@ public interface ICheckpointStore
     Task UpdateLastTimestampAsync(string profileId, DateTime timestamp);
 }
 
+[Obsolete("This interface is not used in the current implementation.", false)]
 public interface IBlockedDomainStore
 {
     /// <summary>
@@ -114,6 +117,7 @@ public interface IGamblingSuspectStore
     Task<GamblingSuspect?> GetSuspectAsync(string domain);
 }
 
+[Obsolete("This interface is not used in the current implementation.", false)]
 public interface IGamblingSuspectAnalyzer
 {
     /// <summary>

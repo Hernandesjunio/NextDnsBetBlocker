@@ -4,6 +4,11 @@ using Azure.Data.Tables;
 using Microsoft.Extensions.Logging;
 using NextDnsBetBlocker.Core.Interfaces;
 
+/// <summary>
+/// OBSOLETE: Esta classe não está sendo utilizada na pipeline atual.
+/// Armazenamento de domínios bloqueados não é requerido pela pipeline ativa.
+/// </summary>
+[Obsolete("This class is not used in the current implementation.", false)]
 public class BlockedDomainStore : IBlockedDomainStore
 {
     private readonly TableClient _tableClient;

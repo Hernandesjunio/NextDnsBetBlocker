@@ -64,9 +64,6 @@ public static class CoreServiceCollectionExtensions
         // ============= MEMORY CACHE =============
         services.AddMemoryCache();
 
-        // ============= CHECKPOINT STORE (Shared) =============
-        services.AddSingleton<ICheckpointStore, CheckpointStore>();
-
         services.AddScoped<IProgressReporter, LoggingProgressReporter>();
 
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
@@ -167,7 +164,6 @@ public static class CoreServiceCollectionExtensions
             .ValidateOnStart();
 
         // ============= HTTP CLIENTS =============
-        services.AddHttpClient<INextDnsClient, NextDnsClient>();
         services.AddHttpClient("HageziProvider")
             .ConfigureHttpClient(client =>
             {
@@ -180,9 +176,6 @@ public static class CoreServiceCollectionExtensions
             .ValidateOnStart();
 
         // ============= AZURE STORAGE - TABLE CLIENTS =============
-        services.AddSingleton<IBlockedDomainStore, BlockedDomainStore>();
-
-        // ICheckpointStore já é registrado em RegisterSharedServices
         services.AddSingleton<IGamblingSuspectStore, GamblingSuspectStore>();
 
         // ============= HAGEZI GAMBLING STORE (Table Storage Query) =============
@@ -205,9 +198,6 @@ public static class CoreServiceCollectionExtensions
         
         // ============= BET BLOCKER PIPELINE =============
         services.AddSingleton<IBetBlockerPipeline, BetBlockerPipeline>();
-
-        // ============= GAMBLING SUSPECT ANALYZER =============
-        services.AddSingleton<IGamblingSuspectAnalyzer, GamblingSuspectAnalyzer>();
     }
 }
 
