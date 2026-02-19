@@ -109,6 +109,7 @@ public static class Program
 
         try
         {
+            await checkpointTableClient.CreateIfNotExistsAsync();
             var response = await checkpointTableClient.GetEntityAsync<TableEntity>("checkpoint", nextDnsProfileId);
             // Entity exists, no need to seed
         }
