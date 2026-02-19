@@ -173,9 +173,11 @@ public class GenericListImporter : IListImporter
                 ElapsedTime = TimeSpan.FromMilliseconds(results.Max(r => r.ElapsedTime.TotalMilliseconds))
             };
 
-            // 6. Salvar novo arquivo como referência para próximo diff
-            await SaveImportedFileAsync(config, newDomains, cancellationToken);
-
+            if (removes.Count > 0 || adds.Count > 0)
+            {
+                // 6. Salvar novo arquivo como referência para próximo diff
+                await SaveImportedFileAsync(config, newDomains, cancellationToken);
+            }
             _logger.LogInformation(
                 "✓ Diff import completed for {ListName}: +{Adds:N0} adds, -{Removes:N0} removes | Errors: {Errors}",
                 config.ListName,
