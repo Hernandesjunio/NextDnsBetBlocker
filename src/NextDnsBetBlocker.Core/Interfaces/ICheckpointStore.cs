@@ -4,7 +4,6 @@ namespace NextDnsBetBlocker.Core.Interfaces;
 /// OBSOLETE: Esta interface não está sendo utilizada na pipeline atual.
 /// Checkpoint está registrado em DI mas nunca é injetado em nenhum serviço ativo.
 /// </summary>
-[Obsolete("This interface is not used in the current implementation.", false)]
 public interface ICheckpointStore
 {
     /// <summary>

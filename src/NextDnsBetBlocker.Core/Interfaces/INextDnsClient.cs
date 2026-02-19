@@ -6,7 +6,6 @@ using NextDnsBetBlocker.Core.Models;
 /// OBSOLETE: Esta interface não está sendo utilizada na pipeline atual.
 /// A obtenção de logs é feita através de ILogsProducer.
 /// </summary>
-[Obsolete("This interface is not used in the current implementation. Use ILogsProducer instead.", false)]
 public interface INextDnsClient
 {
     /// <summary>

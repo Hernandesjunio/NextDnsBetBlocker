@@ -10,7 +10,6 @@ using NextDnsBetBlocker.Core.Models;
 /// OBSOLETE: Esta classe não está sendo utilizada na pipeline atual.
 /// Análise detalhada de domínios suspeitos foi removida da pipeline ativa.
 /// </summary>
-[Obsolete("This class is not used in the current implementation.", false)]
 public class GamblingSuspectAnalyzer : IGamblingSuspectAnalyzer
 {
     private readonly ILogger<GamblingSuspectAnalyzer> _logger;

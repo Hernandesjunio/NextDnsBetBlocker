@@ -6,7 +6,6 @@ using NextDnsBetBlocker.Core.Models;
 /// OBSOLETE: Esta interface não está sendo utilizada na pipeline atual.
 /// Análise detalhada de domínios suspeitos foi removida da pipeline ativa.
 /// </summary>
-[Obsolete("This interface is not used in the current implementation.", false)]
 public interface IGamblingSuspectAnalyzer
 {
     /// <summary>

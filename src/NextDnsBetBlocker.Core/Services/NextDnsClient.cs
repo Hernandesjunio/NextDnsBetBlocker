@@ -15,7 +15,6 @@ using NextDnsBetBlocker.Core.Models;
 /// OBSOLETE: Esta classe não está sendo utilizada na pipeline atual.
 /// Use ILogsProducer para obtenção de logs.
 /// </summary>
-[Obsolete("This class is not used in the current implementation. Use LogsProducer instead.", false)]
 public class NextDnsClient : INextDnsClient
 {
     private readonly HttpClient _httpClient;

@@ -196,6 +196,10 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IBetClassifier, BetClassifier>();
 
         // ============= PIPELINE COMPONENTS =============
+        services.AddSingleton<INextDnsClient, NextDnsClient>();
+        services.AddSingleton<ICheckpointStore, CheckpointStore>();
+        services.AddSingleton<IBlockedDomainStore, BlockedDomainStore>();
+        services.AddSingleton<IGamblingSuspectAnalyzer, GamblingSuspectAnalyzer>();
         services.AddSingleton<ILogsProducer, LogsProducer>();
         services.AddSingleton<IClassifierConsumer, ClassifierConsumer>();
         services.AddSingleton<ITrancoAllowlistConsumer, TrancoAllowlistConsumer>();

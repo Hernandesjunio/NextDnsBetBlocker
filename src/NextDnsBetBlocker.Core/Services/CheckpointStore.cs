@@ -8,7 +8,6 @@ using NextDnsBetBlocker.Core.Interfaces;
 /// OBSOLETE: Esta classe não está sendo utilizada na pipeline atual.
 /// Checkpoint está registrado em DI mas nunca é injetado em nenhum serviço ativo.
 /// </summary>
-[Obsolete("This class is not used in the current implementation.", false)]
 public class CheckpointStore : ICheckpointStore
 {
     private readonly TableClient _tableClient;

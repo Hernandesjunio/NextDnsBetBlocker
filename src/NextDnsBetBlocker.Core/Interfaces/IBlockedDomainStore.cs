@@ -4,7 +4,6 @@ namespace NextDnsBetBlocker.Core.Interfaces;
 /// OBSOLETE: Esta interface não está sendo utilizada na pipeline atual.
 /// Armazenamento de domínios bloqueados não é requerido pela pipeline ativa.
 /// </summary>
-[Obsolete("This interface is not used in the current implementation.", false)]
 public interface IBlockedDomainStore
 {
     /// <summary>
