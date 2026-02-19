@@ -98,50 +98,24 @@ public class HttpDownloadService : IDownloadService
                 string? line;
                 while ((line = await reader.ReadLineAsync(cancellationToken)) != null)
                 {
-                    var trimmed = line.Trim();
+                    // Usar Span para evitar alocações intermediárias
+                    var lineSpan = line.AsSpan().Trim();
 
                     // Ignorar linhas vazias e comentários
-                    if (string.IsNullOrEmpty(trimmed) || CommentLineRegex.IsMatch(trimmed))
+                    if (lineSpan.IsEmpty || CommentLineRegex.IsMatch(lineSpan.ToString()))
                         continue;
 
-                    string domain;
+                    // Extrair domínio como Span (sem alocação)
+                    if (!TryExtractDomain(lineSpan, out var domainSpan))
+                        continue;
 
-                    // Suportar formato: "local=/domínio/"
-                    if (trimmed.StartsWith("local=/"))
-                    {
-                        var match = LocalFormatRegex.Match(trimmed);
-                        if (!match.Success)
-                            continue;
-                        domain = match.Groups[1].Value;
-                    }
-                    // Suportar formato Adblock Plus: "||domínio^"
-                    else if (trimmed.StartsWith("||") && trimmed.EndsWith("^"))
-                    {
-                        var match = AdblockPlusRegex.Match(trimmed);
-                        if (!match.Success)
-                            continue;
-                        domain = match.Groups[1].Value;
-                    }
-                    // Suportar formato DNS CNAME: "1xbet.ac CNAME ." ou "*.1xbet.ac CNAME ."
-                    else if (trimmed.Contains(" CNAME "))
-                    {
-                        var match = CnameFormatRegex.Match(trimmed);
-                        if (!match.Success)
-                            continue;
-                        domain = match.Groups[2].Value;
-                    }
-                    // Suportar formatos: "domínio" ou "rank,domínio" (Tranco)
-                    else
-                    {
-                        domain = trimmed.Contains(',')
-                            ? trimmed.Split(',')[1].Trim()
-                            : trimmed;
-                    }
+                    // Validar domínio usando Span (minimal alocação apenas se necessário)
+                    if (!IsValidDomainSpan(domainSpan))
+                        continue;
 
-                    if (!string.IsNullOrWhiteSpace(domain) && IsValidDomain(domain))
-                    {
-                        domains.Add(domain.ToLowerInvariant());
-                    }
+                    // Converter para string apenas uma vez, já lowercase
+                    var domainStr = domainSpan.ToString().ToLowerInvariant();
+                    domains.Add(domainStr);
 
                     // Linha processada e descartada automaticamente (garbage collection)
                 }
@@ -166,6 +140,81 @@ public class HttpDownloadService : IDownloadService
         }
 
         throw new InvalidOperationException($"Failed to download from {sourceUrl}");
+    }
+
+    /// <summary>
+    /// Extrai o domínio da linha usando Span sem alocação intermediária.
+    /// Suporta formatos: local=/domínio/, ||domínio^, domínio CNAME ., rank,domínio, domínio
+    /// </summary>
+    private static bool TryExtractDomain(ReadOnlySpan<char> line, out ReadOnlySpan<char> domain)
+    {
+        // Suportar formato: "local=/domínio/"
+        if (line.StartsWith("local=/"))
+        {
+            var startIdx = "local=/".Length;
+            var remaining = line[startIdx..];
+            var endIdx = remaining.IndexOf('/');
+            if (endIdx > 0)
+            {
+                domain = remaining[..endIdx];
+                return true;
+            }
+        }
+        // Suportar formato Adblock Plus: "||domínio^"
+        else if (line.StartsWith("||") && line.EndsWith("^"))
+        {
+            domain = line[2..^1];
+            return true;
+        }
+        // Suportar formato DNS CNAME: "1xbet.ac CNAME ." ou "*.1xbet.ac CNAME ."
+        else if (line.Contains(" CNAME ", StringComparison.Ordinal))
+        {
+            var cnameSpan = " CNAME ";
+            var cnameIdx = line.IndexOf(cnameSpan, StringComparison.Ordinal);
+            if (cnameIdx > 0)
+            {
+                var domainPart = line[..cnameIdx];
+                // Remove wildcard se existir
+                if (domainPart.StartsWith("*."))
+                {
+                    domain = domainPart[2..];
+                }
+                else
+                {
+                    domain = domainPart;
+                }
+                return true;
+            }
+        }
+        // Suportar formato Tranco: "rank,domínio"
+        else if (line.Contains(','))
+        {
+            var commaIdx = line.IndexOf(',');
+            if (commaIdx > 0 && commaIdx < line.Length - 1)
+            {
+                domain = line[(commaIdx + 1)..].Trim();
+                return true;
+            }
+        }
+
+        // Suportar formato simples: "domínio"
+        domain = line;
+        return true;
+    }
+
+    /// <summary>
+    /// Valida se é um domínio válido conforme RFC 1123 usando Span.
+    /// Conversão para string apenas se necessário (validação básica passa).
+    /// </summary>
+    private static bool IsValidDomainSpan(ReadOnlySpan<char> domain)
+    {
+        // Validações básicas em Span (sem alocação)
+        if (domain.IsEmpty || domain.Length > 253)
+            return false;
+
+        // Se passou na validação básica, fazer a validação com regex (precisa de string)
+        var domainStr = domain.ToString();
+        return !string.IsNullOrWhiteSpace(domainStr) && DomainValidationRegex.IsMatch(domainStr);
     }
 
     /// <summary>
