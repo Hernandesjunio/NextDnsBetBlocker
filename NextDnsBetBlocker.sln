@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NextDnsBetBlocker.Worker.Im
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NextDnsBetBlocker.Core.Tests", "tests\NextDnsBetBlocker.Core.Tests\NextDnsBetBlocker.Core.Tests.csproj", "{42A73B94-99D9-5B48-3DA8-A42796A52379}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NextDnsBetBlocker.FunctionApp", "NextDnsBetBlocker.FunctionApp\NextDnsBetBlocker.FunctionApp.csproj", "{37328170-F820-4D69-8695-FE0B2B80CD53}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,6 +34,10 @@ Global
 		{42A73B94-99D9-5B48-3DA8-A42796A52379}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{42A73B94-99D9-5B48-3DA8-A42796A52379}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{42A73B94-99D9-5B48-3DA8-A42796A52379}.Release|Any CPU.Build.0 = Release|Any CPU
+		{37328170-F820-4D69-8695-FE0B2B80CD53}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{37328170-F820-4D69-8695-FE0B2B80CD53}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{37328170-F820-4D69-8695-FE0B2B80CD53}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{37328170-F820-4D69-8695-FE0B2B80CD53}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

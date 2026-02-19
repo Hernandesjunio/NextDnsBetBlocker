@@ -1,0 +1,15 @@
+{
+  "profiles": {
+    "NextDnsBetBlocker.FunctionApp": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7284"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "containerRunArguments": "--init",
+      "httpPort": 33011,
+      "useSSL": false
+    }
+  }
+}
