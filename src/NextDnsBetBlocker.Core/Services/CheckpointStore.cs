@@ -4,15 +4,10 @@ using Azure.Data.Tables;
 using Microsoft.Extensions.Logging;
 using NextDnsBetBlocker.Core.Interfaces;
 
-/// <summary>
-/// OBSOLETE: Esta classe não está sendo utilizada na pipeline atual.
-/// Checkpoint está registrado em DI mas nunca é injetado em nenhum serviço ativo.
-/// </summary>
 public class CheckpointStore : ICheckpointStore
 {
     private readonly TableClient _tableClient;
     private readonly ILogger<CheckpointStore> _logger;
-    private const string TableName = "AgentState";
     private const string PartitionKey = "checkpoint";
 
     public CheckpointStore(TableServiceClient tableServiceClient, ILogger<CheckpointStore> logger)
@@ -21,6 +16,39 @@ public class CheckpointStore : ICheckpointStore
         checkpointTableClient.CreateIfNotExists();
         _tableClient = checkpointTableClient;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Ensures the checkpoint entity exists with default values.
+    /// Should be called during application startup to initialize the checkpoint if it doesn't exist.
+    /// </summary>
+    public async Task EnsureCheckpointAsync(string profileId)
+    {
+        try
+        {
+            // Try to get existing checkpoint
+            await _tableClient.GetEntityAsync<TableEntity>(PartitionKey, profileId);
+            _logger.LogDebug("Checkpoint already exists for {ProfileId}", profileId);
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            // Checkpoint doesn't exist, create with default timestamp
+            try
+            {
+                var defaultTimestamp = DateTime.UtcNow.AddDays(-1);
+                var entity = new TableEntity(PartitionKey, profileId)
+                {
+                    { "LastTimestamp", defaultTimestamp }
+                };
+                await _tableClient.AddEntityAsync(entity);
+                _logger.LogInformation("Created checkpoint for {ProfileId} with default timestamp {Timestamp}", profileId, defaultTimestamp.ToString("O"));
+            }
+            catch (Exception createEx)
+            {
+                _logger.LogError(createEx, "Failed to create checkpoint for {ProfileId}", profileId);
+                throw;
+            }
+        }
     }
 
     public async Task<DateTime?> GetLastTimestampAsync(string profileId)

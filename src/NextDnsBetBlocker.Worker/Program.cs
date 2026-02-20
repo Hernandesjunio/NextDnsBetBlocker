@@ -27,8 +27,6 @@ using NextDnsBetBlocker.Core.Services;
 /// </summary>
 public static class Program
 {
-    private static TableClient? _checkpointTableClient;
-
     public static async Task Main(string[] args)
     {
         var host = new HostBuilder()
@@ -70,58 +68,13 @@ public static class Program
             })
             .Build();
 
-        var settings = host.Services.GetRequiredService<IOptions<WorkerSettings>>().Value;
-
-        // Store checkpoint client for seeding                
-        if (!string.IsNullOrEmpty(settings.AzureStorageConnectionString))
+        // ============= INITIALIZATION ON STARTUP =============
+        using (var scope = host.Services.CreateScope())
         {
-            var tableServiceClient = new TableServiceClient(settings.AzureStorageConnectionString);
-            _checkpointTableClient = tableServiceClient.GetTableClient("AgentState");
-        }
-
-        // ============= SEED CHECKPOINT DATA =============
-        if (_checkpointTableClient != null)
-        {
-            await SeedCheckpointAsync(_checkpointTableClient, host.Services);
-        }
-
-        // ============= INITIALIZE GAMBLING SUSPECTS TABLE =============
-        try
-        {
-            var suspectStore = host.Services.GetRequiredService<IGamblingSuspectStore>();
-            await suspectStore.InitializeAsync();
-        }
-        catch (Exception ex)
-        {
-            // Log but don't fail startup if suspect table init fails
-            var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
-            var logger = loggerFactory.CreateLogger("GamblingSuspectInitialization");
-            logger.LogWarning(ex, "Failed to initialize GamblingSuspects table");
+            var initializer = scope.ServiceProvider.GetRequiredService<AppStartupInitializer>();
+            await initializer.InitializeAsync();
         }
 
         await host.RunAsync();
-    }
-
-    private static async Task SeedCheckpointAsync(TableClient checkpointTableClient, IServiceProvider serviceProvider)
-    {
-        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-        var nextDnsProfileId = configuration["WorkerSettings:NextDnsProfileId"];
-
-        try
-        {
-            await checkpointTableClient.CreateIfNotExistsAsync();
-            var response = await checkpointTableClient.GetEntityAsync<TableEntity>("checkpoint", nextDnsProfileId);
-            // Entity exists, no need to seed
-        }
-        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
-        {
-            // Entity doesn't exist, create it with a default timestamp
-            var defaultTimestamp = DateTime.UtcNow.AddDays(-1);
-            var entity = new TableEntity("checkpoint", nextDnsProfileId)
-            {
-                { "LastTimestamp", defaultTimestamp }
-            };
-            await checkpointTableClient.AddEntityAsync(entity);
-        }
     }
 }

@@ -71,6 +71,9 @@ public static class CoreServiceCollectionExtensions
         // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
         services.AddSingleton<IStorageInfrastructureInitializer, StorageInfrastructureInitializer>();
 
+        // ============= APP STARTUP INITIALIZER =============
+        services.AddSingleton<AppStartupInitializer>();
+
         // ============= DISTRIBUTED LOCK PROVIDER =============
         services.AddSingleton<IDistributedLockProvider>(sp =>
         {
