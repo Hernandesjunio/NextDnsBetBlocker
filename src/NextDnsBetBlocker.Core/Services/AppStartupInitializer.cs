@@ -10,6 +10,7 @@ using NextDnsBetBlocker.Core.Models;
 /// Handles checkpoint seeding and storage infrastructure initialization.
 /// Called once at application startup to ensure all prerequisites are met.
 /// </summary>
+[Obsolete("This class is deprecated. Checkpoint seeding and storage initialization are now handled automatically by the respective services. Manual initialization is no longer necessary.", true)]
 public class AppStartupInitializer
 {
     private readonly ICheckpointStore _checkpointStore;

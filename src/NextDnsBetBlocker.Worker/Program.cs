@@ -68,12 +68,6 @@ public static class Program
             })
             .Build();
 
-        // ============= INITIALIZATION ON STARTUP =============
-        using (var scope = host.Services.CreateScope())
-        {
-            var initializer = scope.ServiceProvider.GetRequiredService<AppStartupInitializer>();
-            await initializer.InitializeAsync();
-        }
 
         await host.RunAsync();
     }

@@ -18,5 +18,7 @@ public class WorkerSettings
     
     // Processing Configuration
     public int ProcessingIntervalSeconds { get; set; } = 1800;
-    
+    public int AnalysisConsumerThreadCount { get; set; } = 10;
+    public int ClassifierConsumerThreadCount { get; set; } = 10;
+    public int TrancoAllowlistConsumerThreadCount { get; set; } = 10;
 }

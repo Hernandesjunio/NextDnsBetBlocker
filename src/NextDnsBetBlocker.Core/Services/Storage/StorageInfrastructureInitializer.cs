@@ -11,6 +11,7 @@ using NextDnsBetBlocker.Core.Models;
 /// Gerencia criação de tabelas e containers
 /// Centraliza toda a lógica que estava distribuída em Program.cs
 /// </summary>
+[Obsolete("StorageInfrastructureInitializer is now the central point for storage setup. Use InitializeAsync() to set up all storage resources.")]
 public class StorageInfrastructureInitializer : IStorageInfrastructureInitializer
 {
     private readonly IListTableStorageRepository _tableRepository;

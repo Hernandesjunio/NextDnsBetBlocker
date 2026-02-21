@@ -311,7 +311,9 @@ namespace NextDnsBetBlocker.Core
             AdaptiveDegradationConfig? degradationConfig = null,
             ShardingProcessorMetrics? metrics = null)
         {
-            _globalBucket = new TokenBucket(globalLimitPerSecond);
+            // Limit burst to 10% of rate (100ms) to prevent massive spikes at start of second
+            int globalBurst = Math.Max(1, (int)(globalLimitPerSecond * 0.1));
+            _globalBucket = new TokenBucket(globalLimitPerSecond, globalBurst);
             _originalPartitionLimit = partitionLimitPerSecond;
             _degradationConfig = degradationConfig ?? new AdaptiveDegradationConfig();
             _degradationConfig.Validate();
@@ -418,15 +420,20 @@ namespace NextDnsBetBlocker.Core
         public async Task ExecuteAsync(string partitionKey, int recordCount, Func<Task> callback)
         {
             int effectiveLimit = GetEffectivePartitionLimit(partitionKey);
-            
+
+            // Limit burst to 10% of rate for partitions too
+            int burst = Math.Max(1, (int)(effectiveLimit * 0.1));
+
             var partitionBucket = _partitionBuckets.GetOrAdd(
                 partitionKey, 
-                _ => new TokenBucket(effectiveLimit));
+                _ => new TokenBucket(effectiveLimit, burst));
 
             // Atualiza o bucket se o limite mudou
-            if (partitionBucket.Capacity != effectiveLimit)
+            if (partitionBucket.Rate != effectiveLimit)
             {
-                _partitionBuckets[partitionKey] = new TokenBucket(effectiveLimit);
+                _partitionBuckets[partitionKey] = new TokenBucket(effectiveLimit, burst);
+                // Refresh reference
+                partitionBucket = _partitionBuckets[partitionKey];
             }
 
             await Task.WhenAll(
@@ -510,14 +517,16 @@ namespace NextDnsBetBlocker.Core
         private long _lastRefillTimestamp;
         private readonly SemaphoreSlim _lock = new(1, 1);
 
+        public int Rate { get; }
         public int Capacity { get; }
 
-        public TokenBucket(int tokensPerSecond)
+        public TokenBucket(int tokensPerSecond, int? maxBurst = null)
         {
-            Capacity = tokensPerSecond;
-            _capacity = tokensPerSecond;
+            Rate = tokensPerSecond;
+            Capacity = maxBurst ?? tokensPerSecond;
+            _capacity = Capacity;
             _tokensPerMs = (double)tokensPerSecond / 1000.0;
-            _availableTokens = tokensPerSecond;
+            _availableTokens = Capacity;
             _lastRefillTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
 

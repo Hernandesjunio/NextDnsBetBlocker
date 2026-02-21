@@ -48,7 +48,7 @@ public class LogsProducer : ILogsProducer
 
                 _logger.LogDebug("Fetching logs for profile {ProfileId}, cursor: {Cursor}", profileId, cursor ?? "initial");
 
-                var response = await _nextDnsClient.GetLogsRangeAsync(profileId, cursor, limit: 1000, from: lastTimestamp);
+                var response = await _nextDnsClient.GetLogsRangeAsync(profileId, cursor, limit: 100, from: lastTimestamp);
 
                 if (response.Data.Count == 0)
                 {
@@ -78,6 +78,9 @@ public class LogsProducer : ILogsProducer
 
                     if (totalProduced % 100 == 0)
                         _logger.LogDebug("Produced {Total} logs so far", totalProduced);
+
+                    System.Threading.Thread.Sleep(500000);
+
                 }
 
                 cursor = response.Meta.Pagination.Cursor;

@@ -19,6 +19,7 @@ public class HageziGamblingStore : IHageziGamblingStore
     public HageziGamblingStore(TableServiceClient tableServiceClient, ILogger<HageziGamblingStore> logger)
     {
         _tableClient = tableServiceClient.GetTableClient("HageziGambling");
+        _tableClient.CreateIfNotExists();
         _logger = logger;
     }
 

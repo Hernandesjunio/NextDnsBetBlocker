@@ -67,13 +67,7 @@ public static class CoreServiceCollectionExtensions
         services.AddMemoryCache();
 
         services.AddScoped<IProgressReporter, LoggingProgressReporter>();
-
-        // ============= STORAGE INFRASTRUCTURE INITIALIZER =============
-        services.AddSingleton<IStorageInfrastructureInitializer, StorageInfrastructureInitializer>();
-
-        // ============= APP STARTUP INITIALIZER =============
-        services.AddSingleton<AppStartupInitializer>();
-
+                
         // ============= DISTRIBUTED LOCK PROVIDER =============
         services.AddSingleton<IDistributedLockProvider>(sp =>
         {

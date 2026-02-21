@@ -19,6 +19,11 @@ public class AnalysisConsumer : IAnalysisConsumer
     private readonly IBlockedDomainStore _blockedDomainStore;
     private readonly ILogger<AnalysisConsumer> _logger;
 
+    private long _analyzed;
+    private long _blocked;
+    private long _whitelisted;
+    private long _manualReview;
+
     public AnalysisConsumer(
         IGamblingSuspectAnalyzer analyzer,
         IGamblingSuspectStore suspectStore,
@@ -31,6 +36,10 @@ public class AnalysisConsumer : IAnalysisConsumer
         _nextDnsClient = nextDnsClient;
         _blockedDomainStore = blockedDomainStore;
         _logger = logger;
+        _analyzed = 0;
+        _blocked = 0;
+        _whitelisted = 0;
+        _manualReview = 0;
     }
 
     public async Task StartAsync(
@@ -40,93 +49,29 @@ public class AnalysisConsumer : IAnalysisConsumer
     {
         try
         {
-            _logger.LogInformation("AnalysisConsumer started for profile {ProfileId}", profileId);
+            _logger.LogInformation("AnalysisConsumer started for profile {ProfileId} with 10 parallel consumer threads", profileId);
 
-            int analyzed = 0;
-            int blocked = 0;
-            int whitelisted = 0;
-            int manualReview = 0;
+            // Reset counters
+            _analyzed = 0;
+            _blocked = 0;
+            _whitelisted = 0;
+            _manualReview = 0;
 
-            // Read all suspects from input channel (1 thread sequentially)
-            await foreach (var suspectEntry in inputChannel.Reader.ReadAllAsync(cancellationToken))
+            // Create 10 concurrent consumer tasks
+            const int consumerThreadCount = 10;
+            var consumerTasks = new Task[consumerThreadCount];
+
+            for (int i = 0; i < consumerThreadCount; i++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                try
-                {
-                    _logger.LogInformation("Analyzing suspicious domain: {Domain}", suspectEntry.Domain);
-
-                    // Perform detailed analysis
-                    var analysisResult = await _analyzer.AnalyzeDomainAsync(suspectEntry.Domain);
-
-                    // Create suspect record for storage
-                    var suspect = new GamblingSuspect
-                    {
-                        Domain = suspectEntry.Domain,
-                        FirstSeen = suspectEntry.FirstSeen,
-                        AccessCount = 1,
-                        Status = AnalysisStatus.Completed,
-                        ConfidenceScore = analysisResult.ConfidenceScore,
-                        GamblingIndicators = analysisResult.Indicators.Select(i => $"{i.Category}:{i.Indicator}").ToList(),
-                        LastAnalyzed = DateTime.UtcNow,
-                        BlockReason = analysisResult.Reason,
-                        IsWhitelisted = false,
-                        AnalysisDetails = string.Join("; ", analysisResult.Indicators.Select(i => i.Description))
-                    };
-
-                    // Determine status based on score
-                    if (analysisResult.IsGambling && analysisResult.ConfidenceScore >= 70)
-                    {
-                        suspect.Status = AnalysisStatus.Blocked;
-                        suspect.IsWhitelisted = false;
-
-                        // Block in NextDNS
-                        var blockSuccess = await _nextDnsClient.AddToDenylistAsync(profileId,
-                            new DenylistBlockRequest { Id = suspectEntry.Domain, Active = true });
-
-                        if (blockSuccess)
-                        {
-                            await _blockedDomainStore.MarkBlockedAsync(profileId, suspectEntry.Domain);
-                            blocked++;
-                            _logger.LogInformation("✓ Blocked gambling domain {Domain} (Score: {Score})", 
-                                suspectEntry.Domain, analysisResult.ConfidenceScore);
-                        }
-                    }
-                    else if (analysisResult.ConfidenceScore < 40)
-                    {
-                        suspect.Status = AnalysisStatus.Whitelisted;
-                        suspect.IsWhitelisted = true;
-                        whitelisted++;
-                        _logger.LogInformation("✓ Whitelisted legitimate domain {Domain} (Score: {Score})", 
-                            suspectEntry.Domain, analysisResult.ConfidenceScore);
-                    }
-                    else
-                    {
-                        // 40-70: needs manual review
-                        suspect.Status = AnalysisStatus.Manual_Review;
-                        manualReview++;
-                        _logger.LogInformation("⚠ Domain {Domain} requires manual review (Score: {Score})", 
-                            suspectEntry.Domain, analysisResult.ConfidenceScore);
-                    }
-
-                    // Save to storage
-                    await _suspectStore.SaveAnalysisResultAsync(suspect);
-
-                    analyzed++;
-
-                    if (analyzed % 10 == 0)
-                        _logger.LogDebug("Analyzed {Total} suspects", analyzed);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error analyzing domain {Domain}", suspectEntry.Domain);
-                    // Continue with next domain instead of crashing
-                }
+                consumerTasks[i] = ConsumeAndAnalyzeAsync(inputChannel, profileId, cancellationToken);
             }
+
+            // Wait for all consumer threads to complete
+            await Task.WhenAll(consumerTasks);
 
             _logger.LogInformation(
                 "AnalysisConsumer completed: Analyzed={Analyzed}, Blocked={Blocked}, Whitelisted={Whitelisted}, ManualReview={ManualReview}",
-                analyzed, blocked, whitelisted, manualReview);
+                _analyzed, _blocked, _whitelisted, _manualReview);
         }
         catch (OperationCanceledException)
         {
@@ -136,6 +81,92 @@ public class AnalysisConsumer : IAnalysisConsumer
         {
             _logger.LogError(ex, "AnalysisConsumer failed");
             throw;
+        }
+    }
+
+    private async Task ConsumeAndAnalyzeAsync(
+        Channel<SuspectDomainEntry> inputChannel,
+        string profileId,
+        CancellationToken cancellationToken)
+    {
+        // Read suspects from channel (multiple threads can read simultaneously)
+        await foreach (var suspectEntry in inputChannel.Reader.ReadAllAsync(cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                _logger.LogInformation("Analyzing suspicious domain: {Domain}", suspectEntry.Domain);
+
+                // Perform detailed analysis
+                var analysisResult = await _analyzer.AnalyzeDomainAsync(suspectEntry.Domain);
+
+                // Create suspect record for storage
+                var suspect = new GamblingSuspect
+                {
+                    Domain = suspectEntry.Domain,
+                    FirstSeen = suspectEntry.FirstSeen,
+                    AccessCount = 1,
+                    Status = AnalysisStatus.Completed,
+                    ConfidenceScore = analysisResult.ConfidenceScore,
+                    GamblingIndicators = analysisResult.Indicators.Select(i => $"{i.Category}:{i.Indicator}").ToList(),
+                    LastAnalyzed = DateTime.UtcNow,
+                    BlockReason = analysisResult.Reason,
+                    IsWhitelisted = false,
+                    AnalysisDetails = string.Join("; ", analysisResult.Indicators.Select(i => i.Description))
+                };
+
+                // Determine status based on score
+                if (analysisResult.IsGambling && analysisResult.ConfidenceScore >= 70)
+                {
+                    suspect.Status = AnalysisStatus.Blocked;
+                    suspect.IsWhitelisted = false;
+
+                    // Block in NextDNS
+                    var blockSuccess = await _nextDnsClient.AddToDenylistAsync(profileId,
+                        new DenylistBlockRequest { Id = suspectEntry.Domain, Active = true });
+
+                    if (blockSuccess)
+                    {
+                        await _blockedDomainStore.MarkBlockedAsync(profileId, suspectEntry.Domain);
+                        Interlocked.Increment(ref _blocked);
+                        _logger.LogInformation("✓ Blocked gambling domain {Domain} (Score: {Score})", 
+                            suspectEntry.Domain, analysisResult.ConfidenceScore);
+                    }
+                }
+                else if (analysisResult.ConfidenceScore < 40)
+                {
+                    suspect.Status = AnalysisStatus.Whitelisted;
+                    suspect.IsWhitelisted = true;
+
+                    var success = await _nextDnsClient.AddToAllowlistAsync(profileId, suspectEntry.Domain);
+
+                    Interlocked.Increment(ref _whitelisted);
+                    _logger.LogInformation("✓ Whitelisted legitimate domain {Domain} (Score: {Score})", 
+                        suspectEntry.Domain, analysisResult.ConfidenceScore);
+                }
+                else
+                {
+                    // 40-70: needs manual review
+                    suspect.Status = AnalysisStatus.Manual_Review;
+                    Interlocked.Increment(ref _manualReview);
+                    _logger.LogInformation("⚠ Domain {Domain} requires manual review (Score: {Score})", 
+                        suspectEntry.Domain, analysisResult.ConfidenceScore);
+                }
+
+                // Save to storage
+                await _suspectStore.SaveAnalysisResultAsync(suspect);
+
+                Interlocked.Increment(ref _analyzed);
+
+                if (_analyzed % 10 == 0)
+                    _logger.LogDebug("Analyzed {Total} suspects", _analyzed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error analyzing domain {Domain}", suspectEntry.Domain);
+                // Continue with next domain instead of crashing
+            }
         }
     }
 }

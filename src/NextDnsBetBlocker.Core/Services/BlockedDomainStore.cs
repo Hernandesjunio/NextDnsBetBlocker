@@ -16,6 +16,7 @@ public class BlockedDomainStore : IBlockedDomainStore
     public BlockedDomainStore(TableServiceClient tableServiceClient, ILogger<BlockedDomainStore> logger)
     {
         _tableClient = tableServiceClient.GetTableClient("BlockedDomains");
+        _tableClient.CreateIfNotExists();
         _logger = logger;
     }
 

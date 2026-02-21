@@ -29,6 +29,7 @@ public class ListTableProvider : IListTableProvider
         ILogger<ListTableProvider> logger)
     {
         _tableClient = tableServiceClient.GetTableClient(TableName);
+        _tableClient.CreateIfNotExists();
         _cache = cache;
         _partitionKeyStrategy = partitionKeyStrategy;
         _logger = logger;

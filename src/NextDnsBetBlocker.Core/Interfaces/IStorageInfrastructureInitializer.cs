@@ -5,6 +5,7 @@ namespace NextDnsBetBlocker.Core.Interfaces;
 /// Gerencia tabelas (Table Storage) e containers (Blob Storage)
 /// Idempotente: safe to call multiple times
 /// </summary>
+[Obsolete("This interface is deprecated. Storage infrastructure is now initialized automatically by the respective services. Manual initialization is no longer necessary.", true)]
 public interface IStorageInfrastructureInitializer
 {
     /// <summary>
