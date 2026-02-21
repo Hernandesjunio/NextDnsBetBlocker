@@ -21,4 +21,5 @@ public class WorkerSettings
     public int AnalysisConsumerThreadCount { get; set; } = 10;
     public int ClassifierConsumerThreadCount { get; set; } = 10;
     public int TrancoAllowlistConsumerThreadCount { get; set; } = 10;
+    public string LockKey { get; set; }
 }

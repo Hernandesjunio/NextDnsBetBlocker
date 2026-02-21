@@ -170,6 +170,7 @@ Per-Partition Rate Limiter (2k ops/s)
 - `ImportRateLimiter`: Sliding window (1s) com Queue<timestamp>
 - `SemaphoreSlim`: Limite físico de concorrência
 - Backpressure: Channels bounded causam WaitAsync se cheios
+- **⚙️ [RECENTE FIX]**: Burst rate agora sincronizado corretamente com effective rate. Ver [THROTTLING_IMPROVEMENTS.md](THROTTLING_IMPROVEMENTS.md) para detalhes
 
 ### 3. **Graceful Degradation - Por Partição** ⚡
 

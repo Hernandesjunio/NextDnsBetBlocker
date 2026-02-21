@@ -17,7 +17,8 @@ Navegação completa da documentação do NextDnsBetBlocker com foco em Table St
 1. Comece com: [README.md](../README.md) - Architecture overview
 2. Deep-dive: [IMPORTER_README.md](IMPORTER_README.md) - Design patterns, quota management
 3. Deep-dive: [WORKER_FUNCTION_README.md](WORKER_FUNCTION_README.md) - Analysis pipeline
-4. Reference: [COST_ANALYSIS.md](COST_ANALYSIS.md) - Economics of design decisions
+4. Technical fix: [THROTTLING_IMPROVEMENTS.md](THROTTLING_IMPROVEMENTS.md) - Burst rate fix & validation
+5. Reference: [COST_ANALYSIS.md](COST_ANALYSIS.md) - Economics of design decisions
 
 #### 👷 **DevOps / Operations**
 1. Quick start: [TABLE_STORAGE_OPERATIONAL_GUIDE.md](TABLE_STORAGE_OPERATIONAL_GUIDE.md) - Checklist, monitoring
@@ -136,6 +137,30 @@ NextDnsBetBlocker Documentation
 │  │  └─ Dashboard setup
 │  │
 │  └─ Escalation procedures
+│
+├─ ⚙️ THROTTLING_IMPROVEMENTS.md (TECHNICAL FIXES)
+│  ├─ Problem Identified
+│  │  ├─ Burst rate desincronizado com effective rate
+│  │  ├─ Overhead: 11.1% - 12.3% (deveria ser 10%)
+│  │  └─ Impacto: Picos irregulares e comportamento imprevisível
+│  │
+│  ├─ Solution Implemented
+│  │  ├─ Sincronização explícita: if (partitionBucket.Rate != effectiveLimit)
+│  │  ├─ Recalc automático ao degradar
+│  │  └─ TokenBucket recriado com burst correto
+│  │
+│  ├─ Validation & Testing
+│  │  ├─ 9 testes cobrindo todos cenários
+│  │  ├─ 100% burst accuracy (antes: 0-123%)
+│  │  └─ 93% redução em variabilidade
+│  │
+│  ├─ Deployment
+│  │  ├─ 100% backward compatible
+│  │  ├─ Nenhuma reconfiguração necessária
+│  │  ├─ Checklist pós-deploy
+│  │  └─ Impacto: ~6-8min import, comportamento estável
+│  │
+│  └─ FAQ & Próximos passos
 │
 ├─ 💰 COST_ANALYSIS.md
 │  ├─ Cost Model
