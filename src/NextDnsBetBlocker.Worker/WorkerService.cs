@@ -45,31 +45,18 @@ public class WorkerService : BackgroundService
 
             while (isFirst || await timer.WaitForNextTickAsync(stoppingToken))
             {
-                var lockAcquired = await _lockProvider.TryAcquireLockAsync(
-                _settings.LockKey,
-                lockDurationSeconds: 60,
-                cancellationToken: CancellationToken.None);
-
-                if (!lockAcquired)
-                {
-                    _logger.LogInformation(
-                        "Execution skipped - distributed lock is held by another instance. Next attempt in 1 minute.");
-                    continue ;
-                }
-
                 try
                 {
                     await _pipeline.ProcessLogsAsync(_settings.NextDnsProfileId);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error processing logs");
-                }
-                finally
-                {
-                    isFirst = false;
-                    await _lockProvider.ReleaseLockAsync(_settings.LockKey);
-                }
+                }                
             }
         }
         catch (OperationCanceledException)

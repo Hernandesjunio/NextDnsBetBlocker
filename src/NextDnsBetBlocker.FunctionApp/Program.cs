@@ -66,11 +66,4 @@ builder.Services.AddLogging(logging =>
 
 var app = builder.Build();
 
-// ============= INITIALIZATION ON STARTUP =============
-using (var scope = app.Services.CreateScope())
-{
-    var initializer = scope.ServiceProvider.GetRequiredService<AppStartupInitializer>();
-    await initializer.InitializeAsync();
-}
-
 await app.RunAsync();
