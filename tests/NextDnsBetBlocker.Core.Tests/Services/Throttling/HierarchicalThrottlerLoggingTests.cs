@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using NextDnsBetBlocker.Core;
 using System;
+using System.Globalization;
 using Xunit;
 
 /// <summary>
@@ -11,6 +12,13 @@ using Xunit;
 /// </summary>
 public class HierarchicalThrottlerLoggingTests
 {
+    private readonly Mock<ILoggerFactory> _loggerFactoryMock;
+
+    public HierarchicalThrottlerLoggingTests()
+    {
+        _loggerFactoryMock = new Mock<ILoggerFactory>();
+    }
+
     [Fact]
     public void RecordError_LogsCircuitBreakerReset_WhenCircuitBreakerIsOpen()
     {
@@ -48,9 +56,9 @@ public class HierarchicalThrottlerLoggingTests
             x => x.Log(
                 LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString().Contains("Circuit breaker reset")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString() != null && v.ToString()!.Contains("Circuit breaker reset")),
                 It.IsAny<Exception>(),
-                It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
     }
 
@@ -82,9 +90,9 @@ public class HierarchicalThrottlerLoggingTests
             x => x.Log(
                 LogLevel.Warning,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString().Contains("Partition")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString() != null && v.ToString()!.Contains("Partition")),
                 It.IsAny<Exception>(),
-                It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
     }
 
@@ -119,9 +127,9 @@ public class HierarchicalThrottlerLoggingTests
             x => x.Log(
                 LogLevel.Critical,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString().Contains("Circuit breaker opened")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString() != null && v.ToString()!.Contains("Circuit breaker opened")),
                 It.IsAny<Exception>(),
-                It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
     }
 
@@ -159,9 +167,9 @@ public class HierarchicalThrottlerLoggingTests
             x => x.Log(
                 LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString().Contains("recovering")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString() != null && v.ToString()!.Contains("recovering")),
                 It.IsAny<Exception>(),
-                It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
     }
 
@@ -189,7 +197,7 @@ public class HierarchicalThrottlerLoggingTests
             It.IsAny<EventId>(),
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
-            It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Never);
     }
 
@@ -202,7 +210,7 @@ public class HierarchicalThrottlerLoggingTests
             partitionLimitPerSecond: 100,
             degradationConfig: null,
             metrics: null,
-            logger: null);
+            logger: _loggerFactoryMock.Object.CreateLogger<HierarchicalThrottler>());
 
         // Assert
         Assert.NotNull(throttler);

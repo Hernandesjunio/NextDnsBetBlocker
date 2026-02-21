@@ -61,8 +61,7 @@ public class ListImportOrchestratorTests
         _orchestrator = new ListImportOrchestrator(
             _mockLogger.Object,
             _mockTableRepository.Object,
-            _mockMetricsCollector.Object,
-            _mockRateLimiter.Object,
+            _mockMetricsCollector.Object,            
             _mockPartitionKeyStrategy.Object,
             _mockProgressReporter.Object,
             _loggerFactory.Object,
@@ -230,53 +229,7 @@ public class ListImportOrchestratorTests
             Times.Once);
     }
 
-    [Fact]
-    public async Task ExecuteImportAsync_CallsRateLimiter()
-    {
-        // Arrange
-        var config = new ListImportItemConfig
-        {
-            ListName = "TestList",
-            SourceUrl = new[] { "http://example.com/list.txt" },
-            TableName = "TestTable",
-            BlobContainer = "test-container",
-            BatchSize = 100
-        };
-
-        var domains = new[] { "example.com", "test.com" };
-
-        var batchResult = new BatchOperationResult
-        {
-            BatchId = "batch-1",
-            ItemCount = 2,
-            SuccessCount = 2,
-            FailureCount = 0
-        };
-
-        _mockTableRepository
-            .Setup(t => t.UpsertBatchAsync(
-                It.IsAny<string>(),
-                It.IsAny<List<DomainListEntry>>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(batchResult);
-
-        var progress = new Progress<ImportProgress>();
-        var cts = new CancellationTokenSource();
-
-        // Act
-        await _orchestrator.ExecuteImportAsync(
-            config,
-            ImportOperationType.Add,
-            domains,
-            progress,
-            cts.Token);
-
-        // Assert
-        _mockRateLimiter.Verify(
-            r => r.WaitAsync(It.IsAny<int>(), cts.Token),
-            Times.AtLeastOnce);
-    }
-
+    
     [Fact]
     public async Task ExecuteImportAsync_CancelledTokenThrowsOperationCanceledException()
     {

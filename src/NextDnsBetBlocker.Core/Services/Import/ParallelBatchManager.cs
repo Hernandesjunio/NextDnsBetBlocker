@@ -29,8 +29,7 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
     private readonly SlidingWindowRateLimiter _globalRateLimiter;
     private readonly ParallelBatchManagerMetrics _metrics;
     private readonly ConcurrentBag<Task> _consumerTasks;
-    private volatile int _totalBatchesProcessed;
-    private volatile bool _producerCompleted;
+    private volatile int _totalBatchesProcessed;    
     private volatile bool _disposed;
 
     // Producer staging: acumula items até formar batches de 100
@@ -186,8 +185,7 @@ public sealed class ParallelBatchManager : IAsyncDisposable, IDisposable
         // Consumers são iniciados lazily em GetOrCreateConsumer
         await RunProducerAsync(entries, sendBatchFunc, cancellationToken);
 
-        // Sinalizar fim de produção em todos os channels
-        _producerCompleted = true;
+        
         foreach (var kvp in _partitionConsumers)
         {
             kvp.Value.BatchChannel.Writer.Complete();

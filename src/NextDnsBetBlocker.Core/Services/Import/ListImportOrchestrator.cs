@@ -32,8 +32,7 @@ public class ListImportOrchestrator : IListImportOrchestrator
     public ListImportOrchestrator(
         ILogger<ListImportOrchestrator> logger,
         IListTableStorageRepository tableRepository,
-        IImportMetricsCollector metricsCollector,
-        IImportRateLimiter rateLimiter,
+        IImportMetricsCollector metricsCollector,        
         IPartitionKeyStrategy partitionKeyStrategy,
         IProgressReporter progressReporter,
         ILoggerFactory loggerFactory,
@@ -72,6 +71,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
                 operationType);
 
             _metricsCollector.Reset();
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             // Garantir que tabela existe
             await _tableRepository.EnsureTableExistsAsync(config.TableName, cancellationToken);
@@ -218,6 +219,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Converter Entity para DomainListEntry para Table Storage
             var domainEntries = batch.Select(e => new DomainListEntry
             {
@@ -276,6 +279,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Converter Entity para DomainListEntry para Table Storage
             var domainEntries = batch.Select(e => new DomainListEntry
             {

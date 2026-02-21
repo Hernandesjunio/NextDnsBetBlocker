@@ -10,8 +10,8 @@ namespace NextDnsBetBlocker.Core
 {
     public class Entity
     {
-        public string PartitionKey { get; set; }
-        public string RowKey { get; set; }
+        public string PartitionKey { get; set; } = string.Empty;
+        public string RowKey { get; set; } = string.Empty;
     }
 
     public record ThrottlingConfig(
