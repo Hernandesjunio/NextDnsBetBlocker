@@ -1,16 +1,7 @@
 global using NextDnsBetBlocker.Worker;
 global using NextDnsBetBlocker.Worker.Services;
-
-using Azure.Data.Tables;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using NextDnsBetBlocker.Core.DependencyInjection;
-using NextDnsBetBlocker.Core.Interfaces;
 using NextDnsBetBlocker.Core.Models;
-using NextDnsBetBlocker.Core.Services;
 
 /// <summary>
 /// NextDnsBetBlocker.Worker
@@ -36,7 +27,7 @@ public static class Program
                     .SetBasePath(Directory.GetCurrentDirectory())
                     .AddJsonFile("appsettings.json", optional: true)
                     .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true)
-                    .AddUserSecrets("0ff93d8b-998c-49a6-b6c7-b487f46e236f")
+                    .AddUserSecrets<WorkerService>()
                     .AddEnvironmentVariables();
             })
             .ConfigureServices((context, services) =>
@@ -67,8 +58,7 @@ public static class Program
                 }
             })
             .Build();
-                
-
+        
         await host.RunAsync();
     }
 }

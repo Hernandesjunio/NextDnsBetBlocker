@@ -12,7 +12,7 @@ var config = new ConfigurationBuilder()
     .SetBasePath(Directory.GetCurrentDirectory())
     .AddJsonFile("appsettings.json", optional: false)
     .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development"}.json", optional: true)
-    .AddUserSecrets("79ea0e8c-47e3-4bc6-9ba3-018efc2b5003")
+    .AddUserSecrets<ImportListPipeline>()
     .AddEnvironmentVariables()
     .Build();
 
