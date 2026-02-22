@@ -96,6 +96,13 @@ public class AnalysisConsumer : IAnalysisConsumer
 
             try
             {
+                var whiteList = await _suspectStore.IsWhitelistedAsync(suspectEntry.Domain);
+
+                if (whiteList)
+                {
+                    continue;
+                }
+
                 _logger.LogInformation("Analyzing suspicious domain: {Domain}", suspectEntry.Domain);
 
                 // Perform detailed analysis
@@ -130,7 +137,7 @@ public class AnalysisConsumer : IAnalysisConsumer
                     {
                         await _blockedDomainStore.MarkBlockedAsync(profileId, suspectEntry.Domain);
                         Interlocked.Increment(ref _blocked);
-                        _logger.LogInformation("✓ Blocked gambling domain {Domain} (Score: {Score})", 
+                        _logger.LogInformation("✓ Blocked gambling domain {Domain} (Score: {Score})",
                             suspectEntry.Domain, analysisResult.ConfidenceScore);
                     }
                 }
@@ -142,7 +149,7 @@ public class AnalysisConsumer : IAnalysisConsumer
                     var success = await _nextDnsClient.AddToAllowlistAsync(profileId, suspectEntry.Domain);
 
                     Interlocked.Increment(ref _whitelisted);
-                    _logger.LogInformation("✓ Whitelisted legitimate domain {Domain} (Score: {Score})", 
+                    _logger.LogInformation("✓ Whitelisted legitimate domain {Domain} (Score: {Score})",
                         suspectEntry.Domain, analysisResult.ConfidenceScore);
                 }
                 else
@@ -150,7 +157,7 @@ public class AnalysisConsumer : IAnalysisConsumer
                     // 40-70: needs manual review
                     suspect.Status = AnalysisStatus.Manual_Review;
                     Interlocked.Increment(ref _manualReview);
-                    _logger.LogInformation("⚠ Domain {Domain} requires manual review (Score: {Score})", 
+                    _logger.LogInformation("⚠ Domain {Domain} requires manual review (Score: {Score})",
                         suspectEntry.Domain, analysisResult.ConfidenceScore);
                 }
 

@@ -16,6 +16,7 @@ public class GamblingSuspectStore : IGamblingSuspectStore
     public GamblingSuspectStore(TableServiceClient tableServiceClient, ILogger<GamblingSuspectStore> logger)
     {
         _tableClient = tableServiceClient.GetTableClient("GamblingSuspects");
+        _tableClient.CreateIfNotExists();
         _logger = logger;
     }
 
@@ -124,8 +125,8 @@ public class GamblingSuspectStore : IGamblingSuspectStore
                 { "AnalysisDetails", suspect.AnalysisDetails }
             };
 
+            
             await _tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace);
-
             // Remove from pending if exists
             try
             {
