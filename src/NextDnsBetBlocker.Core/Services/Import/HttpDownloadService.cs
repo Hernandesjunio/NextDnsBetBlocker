@@ -45,7 +45,7 @@ public class HttpDownloadService : IDownloadService
         CancellationToken cancellationToken)
     {
         var allDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
+        var listTasks = new List<Task<HashSet<string>>>();
         foreach (var sourceUrl in sourceUrls)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -59,9 +59,7 @@ public class HttpDownloadService : IDownloadService
             try
             {
                 _logger.LogInformation("Downloading from {SourceUrl}", sourceUrl);
-                var domainsParsed = await DownloadAndParseFromSourceAsync(sourceUrl, cancellationToken);
-                allDomains.UnionWith(domainsParsed);
-                _logger.LogInformation("Parsed {Count:N0} domains from {SourceUrl}", domainsParsed.Count, sourceUrl);
+                listTasks.Add(DownloadAndParseFromSourceAsync(sourceUrl, cancellationToken));                
             }
             catch (Exception ex)
             {
@@ -70,12 +68,9 @@ public class HttpDownloadService : IDownloadService
             }
         }
 
-        if (allDomains.Count == 0)
-        {
-            throw new InvalidOperationException("No domains downloaded from any source");
-        }
+        await Task.WhenAll(listTasks);
 
-        return allDomains;
+        return listTasks.SelectMany(c => c.Result).ToHashSet();
     }
 
     /// <summary>
@@ -122,8 +117,6 @@ public class HttpDownloadService : IDownloadService
                     // Converter para string apenas uma vez, já lowercase
                     var domainStr = domainSpan.ToString().ToLowerInvariant();
                     domains.Add(domainStr);
-
-                    // Linha processada e descartada automaticamente (garbage collection)
                 }
 
                 return domains; // Sucesso
