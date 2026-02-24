@@ -161,10 +161,10 @@ namespace NextDnsBetBlocker.Core
         {
             await foreach (var batch in _batchesChannel.Reader.ReadAllAsync())
             {
-                var breaker = _throttler.GetCircuitBreakerState(_partitionKey);
-                if (breaker == CircuitBreakerState.Open)
+                // Se o disjuntor estiver aberto, aguardar em vez de descartar os dados
+                while (_throttler.GetCircuitBreakerState(_partitionKey) == CircuitBreakerState.Open)
                 {
-                    continue;
+                    await Task.Delay(1000); // Backoff simples enquanto aguarda recuperação
                 }
 
                 try
@@ -190,10 +190,17 @@ namespace NextDnsBetBlocker.Core
                 }
                 catch (Exception ex)
                 {
-                    // Falha - registrar em métricas
+                    // Falha crítica no lote após retries
                     _metrics.RecordBatchFailed(_partitionKey, batch.Count);
                     _throttler.RecordError(_partitionKey, ex);
-                    throw;
+
+                    // Logar erro mas manter o worker vivo para próximos lotes
+                    _logger.LogError(ex, 
+                        "❌ Falha crítica no processamento de batch na partição {PartitionKey}. {Count} itens não foram salvos. Worker continua ativo.", 
+                        _partitionKey, 
+                        batch.Count);
+
+                    // Não relançar para não matar o worker
                 }
             }
         }
