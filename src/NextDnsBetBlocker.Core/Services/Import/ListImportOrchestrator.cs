@@ -110,21 +110,37 @@ public class ListImportOrchestrator : IListImportOrchestrator
                 _loggerFactory,
                 degradationConfig);
 
-            // Converter domínios para Entity
+            // Converter domínios para Entity (streaming - não materializar em memória)
             var entities = domains.Select(domain =>
             {
+                // Note: RecordItemProcessed é chamado aqui durante o processamento, não na criação.
+                // Ajustado para manter compatibilidade, mas idealmente seria no worker.
+                // Como _metricsCollector é seguro, pode ser chamado aqui.
                 _metricsCollector.RecordItemProcessed();
                 return new Entity
                 {
                     PartitionKey = _partitionKeyStrategy.GetPartitionKey(domain),
                     RowKey = domain
                 };
-            }).ToList();
+            });
 
-            itemCount = entities.Count;
+            // Count requires enumeration or knowing size beforehand.
+            // domains is usually List<string> or similar collection in current pipeline usage.
+            if (domains is ICollection<string> collection)
+            {
+                itemCount = collection.Count;
+            }
+            else
+            {
+                // Fallback: Contagem aproximada ou 0 se desconhecido
+                // ShardingProcessor aceita IEnumerable e ajusta progresso
+                // Se count não estiver disponível, o progresso pode não ser preciso (0%)
+                itemCount = domains.Count(); 
+                // Reset enumeration for streaming
+            }
 
             // Processar com ShardingProcessor (batching + throttling + degradação adaptativa + progresso)
-            await shardingProcessor.ProcessAsync(entities);
+            await shardingProcessor.ProcessAsync(entities, itemCount);
 
             // Obter métricas do ShardingProcessor
             var processorMetrics = shardingProcessor.GetMetrics();

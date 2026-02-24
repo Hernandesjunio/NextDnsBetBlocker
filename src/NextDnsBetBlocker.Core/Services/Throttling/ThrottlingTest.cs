@@ -319,10 +319,18 @@ namespace NextDnsBetBlocker.Core
             _progressReporter = progressReporter ?? throw new ArgumentNullException(nameof(progressReporter));
         }
 
-        public async Task ProcessAsync(IEnumerable<Entity> dataSource)
+        public async Task ProcessAsync(IEnumerable<Entity> dataSource, int totalItems = 0)
         {
-            var sourceList = dataSource.ToList();
-            _progress = new ShardingProcessorProgress(sourceList.Count);
+            // Não materializar a lista inteira se possível
+            // Usar o count fornecido ou tentar contar sem enumerar
+            int count = totalItems;
+            if (count == 0)
+            {
+               if (dataSource is ICollection<Entity> coll) count = coll.Count;
+               // Se não for possível saber o count, progresso pode ficar impreciso ou deve ser omitido
+            }
+
+            _progress = new ShardingProcessorProgress(count);
 
             // Hook progress events to reporter
             if (_progressReporter != null)
@@ -332,7 +340,7 @@ namespace NextDnsBetBlocker.Core
 
             var workerTasks = new List<Task>();
 
-            foreach (var item in sourceList)
+            foreach (var item in dataSource)
             {
                 string pk = item.PartitionKey;
 
@@ -353,6 +361,7 @@ namespace NextDnsBetBlocker.Core
                     return newWorker;
                 });
 
+                // WriteAsync aguardará se o canal estiver cheio (Backpressure)
                 await worker.Writer.WriteAsync(item);
             }
 
