@@ -20,15 +20,19 @@ namespace NextDnsBetBlocker.Core
 
     public record PartitionProcessingConfig(
         int BatchSize = 100,
-        int FlushWorkerCount = 5)
+        int FlushWorkerCount = 5,
+        int ChannelCapacity = 500)
     {
         public void Validate()
         {
             if (BatchSize <= 0)
                 throw new ArgumentException("BatchSize deve ser maior que 0", nameof(BatchSize));
-            
+
             if (FlushWorkerCount <= 0)
                 throw new ArgumentException("FlushWorkerCount deve ser maior que 0", nameof(FlushWorkerCount));
+
+            if (ChannelCapacity <= 0)
+                throw new ArgumentException("ChannelCapacity deve ser maior que 0", nameof(ChannelCapacity));
         }
     }
 
@@ -115,8 +119,28 @@ namespace NextDnsBetBlocker.Core
             _partitionLimit = partitionLimit;
             _progress = progress;
             _progressReporter = progressReporter;
-            _itemsChannel = Channel.CreateUnbounded<Entity>();
-            _batchesChannel = Channel.CreateUnbounded<List<Entity>>();
+
+            // Configurar opções de canal com limite (Backpressure)
+            // ChannelCapacity é definido em "batches" na configuração.
+            // itemsChannel armazena itens individuais -> capacidade = buffers * BatchSize (ex: 500 * 100 = 50k itens)
+            int itemsCapacity = _processingConfig.ChannelCapacity * _processingConfig.BatchSize;
+            var itemsOptions = new BoundedChannelOptions(itemsCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true,  // Apenas BatcherWorker lê
+                SingleWriter = false  // Vários threads podem escrever via ShardingProcessor
+            };
+
+            // batchesChannel armazena batches prontos -> capacidade = buffers (ex: 500 batches)
+            var batchesOptions = new BoundedChannelOptions(_processingConfig.ChannelCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false, // Múltiplos FlushWorkers leem
+                SingleWriter = true   // Apenas BatcherWorker escreve
+            };
+
+            _itemsChannel = Channel.CreateBounded<Entity>(itemsOptions);
+            _batchesChannel = Channel.CreateBounded<List<Entity>>(batchesOptions);
         }
 
         public ChannelWriter<Entity> Writer => _itemsChannel.Writer;

@@ -85,7 +85,8 @@ public class ListImportOrchestrator : IListImportOrchestrator
             // Configuração de processamento
             var processingConfig = new PartitionProcessingConfig(
                 BatchSize: _parallelConfig.PartitionProcessing.BatchSize,
-                FlushWorkerCount: _parallelConfig.PartitionProcessing.FlushWorkerCount);
+                FlushWorkerCount: _parallelConfig.PartitionProcessing.FlushWorkerCount,
+                ChannelCapacity: _parallelConfig.ChannelCapacityPerPartition);
 
             // Configuração de degradação (opcional, para resiliência)
             var degradationConfig = new AdaptiveDegradationConfig(
