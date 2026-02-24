@@ -221,6 +221,9 @@ namespace NextDnsBetBlocker.Core
 
             int currentTotal = Interlocked.Add(ref _itemsProcessedInCurrentSecond, count);
 
+            // Registrar métrica de throughput máximo
+            _metrics.RecordThroughput(_partitionKey, currentTotal);
+
             // Alerta se exceder 110% do limite (considerando burst permitido de 10%)
             // O Azure permite picos breves, mas sustentação acima do limite causa 429
             int alertThreshold = (int)(_partitionLimit * 1.1); 

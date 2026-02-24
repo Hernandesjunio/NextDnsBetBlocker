@@ -144,22 +144,34 @@ public class ListImportOrchestrator : IListImportOrchestrator
                 itemCount > 0 ? itemCount / overallStopwatch.Elapsed.TotalSeconds : 0,
                 processorMetrics.GlobalSuccessRate);
 
-            // Log de degradação e circuit breaker se houve
-            if (processorMetrics.TotalDegradationEvents > 0 || processorMetrics.TotalCircuitBreakerOpenings > 0)
+            // Log de degradação, circuit breaker e excesso de throughput
+            var partitionLimit = _parallelConfig.Throttling.PartitionLimitPerSecond;
+            var problematicPartitions = processorMetrics.PartitionMetrics
+                .Where(p => p.Value.DegradationCount > 0 || 
+                           p.Value.IsCircuitBreakerOpen || 
+                           p.Value.MaxThroughput > partitionLimit)
+                .ToList();
+
+            if (problematicPartitions.Any())
             {
                 _logger.LogWarning(
-                    "Import completed with degradation | Degradation events: {DegradationEvents} | Circuit breaker openings: {CircuitBreakerOpenings} | Partitions affected: {PartitionsWithIssues}",
+                    "Import completed with issues | Degradation events: {DegradationEvents} | Circuit breaker openings: {CircuitBreakerOpenings} | Partitions affected: {PartitionsCount}",
                     processorMetrics.TotalDegradationEvents,
                     processorMetrics.TotalCircuitBreakerOpenings,
-                    processorMetrics.PartitionMetrics.Count(p => p.Value.DegradationCount > 0 || p.Value.IsCircuitBreakerOpen));
+                    problematicPartitions.Count);
 
-                foreach (var partition in processorMetrics.PartitionMetrics.Where(p => p.Value.DegradationCount > 0 || p.Value.IsCircuitBreakerOpen))
+                foreach (var partition in problematicPartitions)
                 {
+                    bool exceededLimit = partition.Value.MaxThroughput > partitionLimit;
+                    string status = partition.Value.IsCircuitBreakerOpen ? "OPEN" : (exceededLimit ? "THROTTLED" : "DEGRADED");
+
                     _logger.LogInformation(
-                        "Partition {PartitionKey}: Degradation={DegradationCount} | CircuitBreaker={IsOpen} | SuccessRate={SuccessRate}%",
+                        "Partition {PartitionKey}: Status={Status} | MaxThroughput={MaxThroughput}/{Limit} | Degradation={DegradationCount} | SuccessRate={SuccessRate}%",
                         partition.Key,
+                        status,
+                        partition.Value.MaxThroughput,
+                        partitionLimit,
                         partition.Value.DegradationCount,
-                        partition.Value.IsCircuitBreakerOpen ? "OPEN" : "CLOSED",
                         partition.Value.SuccessRate);
                 }
             }

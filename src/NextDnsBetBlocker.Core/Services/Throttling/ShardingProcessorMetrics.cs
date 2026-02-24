@@ -34,6 +34,7 @@ public class ShardingProcessorMetrics
         public volatile bool IsCircuitBreakerOpen;
         public int MaxBatchSize;
         public int MinBatchSize;
+        public volatile int MaxThroughput;
     }
 
     public ShardingProcessorMetrics()
@@ -120,6 +121,33 @@ public class ShardingProcessorMetrics
     }
 
     /// <summary>
+    /// Registrar throughput atual (ops/sec) para rastrear picos
+    /// </summary>
+    public void RecordThroughput(string partitionKey, int throughput)
+    {
+        var metrics = _partitionMetrics.GetOrAdd(partitionKey, _ => new PartitionMetrics());
+
+        // Loop otimista para atualizar o máximo (interlocked compare exchange pattern não é trivial para > comparision,
+        // mas como throughput só aumenta em rajadas no mesmo segundo, e é resetado externamente (no worker),
+        // aqui recebemos o "throughput do segundo atual".
+        // Vamos apenas tentar atualizar se for maior.
+
+        int currentMax = metrics.MaxThroughput;
+        if (throughput > currentMax)
+        {
+            // Tenta atualizar se for maior. Se falhar (outro thread atualizou), não tem problema se perdermos um update menor.
+            // Mas para garantir precisão do pico:
+            int initialValue;
+            do
+            {
+                initialValue = metrics.MaxThroughput;
+                if (throughput <= initialValue) break;
+            }
+            while (Interlocked.CompareExchange(ref metrics.MaxThroughput, throughput, initialValue) != initialValue);
+        }
+    }
+
+    /// <summary>
     /// Obter métricas consolidadas
     /// </summary>
     public ShardingProcessorMetricsSummary GetSummary()
@@ -140,6 +168,7 @@ public class ShardingProcessorMetrics
                 IsCircuitBreakerOpen = kvp.Value.IsCircuitBreakerOpen,
                 MaxBatchSize = kvp.Value.MaxBatchSize,
                 MinBatchSize = kvp.Value.MinBatchSize,
+                MaxThroughput = kvp.Value.MaxThroughput,
                 SuccessRate = kvp.Value.BatchesProcessed + kvp.Value.BatchesFailed > 0
                     ? (kvp.Value.BatchesProcessed * 100) / (kvp.Value.BatchesProcessed + kvp.Value.BatchesFailed)
                     : 0
@@ -184,6 +213,7 @@ public class ShardingProcessorMetrics
             IsCircuitBreakerOpen = metrics.IsCircuitBreakerOpen,
             MaxBatchSize = metrics.MaxBatchSize,
             MinBatchSize = metrics.MinBatchSize,
+            MaxThroughput = metrics.MaxThroughput,
             SuccessRate = metrics.BatchesProcessed + metrics.BatchesFailed > 0
                 ? (metrics.BatchesProcessed * 100) / (metrics.BatchesProcessed + metrics.BatchesFailed)
                 : 0
@@ -240,5 +270,6 @@ public class PartitionMetricsSummary
     public bool IsCircuitBreakerOpen { get; set; }
     public int MaxBatchSize { get; set; }
     public int MinBatchSize { get; set; }
+    public int MaxThroughput { get; set; }
     public int SuccessRate { get; set; }
 }
