@@ -26,6 +26,31 @@ Cost:           ~$0.50 (transaction cost)
 
 ---
 
+## High-Throughput Architecture (Internals)
+
+Para atingir a importação massiva com estabilidade, o sistema utiliza um conjunto de padrões de resiliência. Esta seção serve como referência para implementação de sistemas similares de alta vazão.
+
+### 1. Hierarchical Token Bucket com Burst Control
+O sistema limita a vazão em dois níveis simultâneos usando o algoritmo Token Bucket:
+1. **Global Limit**: Protege a largura de banda da rede e CPU do container (ex: 20k ops/s).
+2. **Partition Limit**: Protege partições individuais do Azure Table Storage (ex: 2k ops/s - limite físico da Azure).
+
+**Correção de Burst**: Diferente de implementações ingênuas, o *Burst Capacity* (rajada permitida, geralmente 10% do rate) é recalculado dinamicamente. Se uma partição sofre degradação (ex: cai para 1000 ops/s), o burst é ajustado proporcionalmente (100 ops), evitando picos que casariam novos erros 429.
+
+### 2. Backpressure (Contrapressão) via Bounded Channels
+Para evitar *Out of Memory* (OOM) quando a escrita (Storage) é mais lenta que a leitura (Download/Parsing):
+- Utilizamos `System.Threading.Channels` com capacidade limitada (`BoundedChannel`).
+- Se o canal enche (ex: 500 batches na fila), o **Produtor (Parser)** é suspenso (`await WriteAsync`).
+- Isso propaga a lentidão "para trás" até a origem, equilibrando o sistema sem descartar dados.
+
+### 3. Adaptive Circuit Breaker com Step Recovery
+Em vez de falhar ou tentar cegamente, o sistema monitora erros `429 Too Many Requests`:
+1. **Degradação**: Ao encontrar erro, reduz o limite da partição (ex: -10%).
+2. **Circuit Breaker**: Se a redução atingir o piso (ex: 50%), abre o circuito e para de enviar para aquela partição temporariamente.
+3. **Step Recovery (Recuperação em Degraus)**: A recuperação **não é instantânea**. O sistema sobe o limite em pequenos degraus (ex: +10%) a cada intervalo (ex: 5s) se houver sucesso. Isso evita a oscilação ("flapping") entre carga total e erro.
+
+---
+
 ## Pre-Import Checklist
 
 ### 1. Verificar Quotas Disponíveis
@@ -202,7 +227,9 @@ ping blob.core.windows.net  # deve ser < 50ms
 
 ### Problema: Partition Hot-Spot
 
-**Causa**: Hash distribution ruim (ex: muitos domínios com mesmo prefixo)
+**Causa**: Hash distribution ruim (ex: muitos domínios com mesmo prefixo).
+
+**Sintoma**: Logs `⚠️ Partition {X} throughput warning...` frequentes em uma única partição enquanto outras estão ociosas.
 
 **Diagnóstico**:
 ```kusto
@@ -214,9 +241,26 @@ customMetrics
 ```
 
 **Solução**:
-1. Aumentar partition count (32 → 64)
-2. Usar hash différente (MD5 → SHA256)
-3. Pre-processor: shuffle items antes de partition
+1. Aumentar partition count (32 → 64).
+2. O sistema agora inclui **Burst Control Dinâmico** que mitiga parcialmente picos curtos, mas hotspots sustentados exigem re-particionamento.
+
+---
+
+## Logs e Monitoramento de Throttling
+
+O sistema emite novos logs específicos para saúde de vazão:
+
+- **Aviso (`Warning`)**: `Partition {X} throughput warning: 2200 items/sec (Limit: 2000)`
+    - *Significado*: A partição excedeu o limite nominal. O Burst Bucket absorveu o excesso temporariamente.
+    - *Ação*: Se for esporádico, ignorar. Se contínuo, indica configuração de `MaxConcurrency` muito agressiva.
+
+- **Informação (`Info`)**: `Partition {X} recovering. Limit restored to 1800 ops/sec`
+    - *Significado*: O mecanismo de **Step Recovery** subiu um degrau de performance após período de estabilidade.
+    - *Ação*: Nenhuma. Indica que o sistema está se auto-curando.
+
+- **Erro (`Error`)**: `Import completed with issues | Degradation events...`
+    - *Significado*: Resumo final indicando que houve gargalos.
+    - *Ação*: Verificar métrica `MaxThroughput` no relatório. Se estiver muito acima do limite (ex: 3000 em limite de 2000), ajustes de throttling são necessários.
 
 ---
 

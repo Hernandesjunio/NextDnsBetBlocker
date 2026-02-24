@@ -257,16 +257,52 @@ Main Thread (Producer)
   "ParallelImportConfig": {
     "InitialDegreeOfParallelism": 20,
     "BatchSize": 100,
-    "ChannelCapacityPerPartition": 100,
+    "ChannelCapacityPerPartition": 500,
     "MaxConcurrencyPerPartition": 5,
-    "MaxOperationsPerSecondPerPartition": 2000,
-    "MaxGlobalOperationsPerSecond": 20000,
+    "PartitionProcessing": {
+      "BatchSize": 100,
+      "FlushWorkerCount": 5
+    },
+    "Throttling": {
+        "GlobalLimitPerSecond": 20000,
+        "PartitionLimitPerSecond": 2000
+    },
+    "AdaptiveDegradation": {
+        "Enabled": true,
+        "DegradationPercentagePerError": 10,
+        "MinimumDegradationPercentage": 80,
+        "RecoveryIntervalSeconds": 60,
+        "CircuitBreakerResetIntervalSeconds": 300
+    },
     "MaxGlobalConcurrentRequests": 30,
     "PartitionCount": 32,
     "MaxRetries": 3
   }
 }
 ```
+
+### Configuração Avançada de Tuning
+
+Esta seção detalha os parâmetros críticos para ajuste fino de performance de importação em ambientes de produção.
+
+#### 1. Throttling e Limites
+Controlam a taxa máxima permitida para proteger a infraestrutura do Azure.
+- `Throttling.GlobalLimitPerSecond` (Default: 20000): Limite total de operações/s da aplicação. Deve ser < limite da conta de storage.
+- `Throttling.PartitionLimitPerSecond` (Default: 2000): Limite físico por partição do Azure Table Storage. Aumentar causa erros 429.
+
+#### 2. Processamento e Concorrência
+Controlam como os dados fluem através do pipeline.
+- `PartitionProcessing.FlushWorkerCount` (Default: 5): Número de threads simultâneas escrevendo em *uma única partição*. Aumentar melhora vazão se a latência de rede for alta.
+- `ChannelCapacityPerPartition` (Default: 500): Capacidade do buffer em memória (em número de batches). 
+    - Ex: 500 batches * 100 itens = 50.000 itens por partição.
+    - Se o buffer encher, o download da lista é pausado automaticamente (Backpressure).
+    - **Atenção**: Valores muito altos consomem muita memória RAM.
+
+#### 3. Resiliência e Degradação
+Controlam a reação a falhas do Azure.
+- `AdaptiveDegradation` (Enabled: true): Se ativado, reduz a velocidade automaticamente quando erros ocorrem.
+- `DegradationPercentagePerError` (Default: 10%): Quanto reduzir da velocidade a cada erro.
+- `RecoveryIntervalSeconds` (Default: 60s): Tempo mínimo para tentar recuperar a velocidade original (em degraus).
 
 ### Tuning para Different Environments
 

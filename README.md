@@ -7,10 +7,14 @@
 ### Objetivo Principal
 
 Fornecer um sistema robusto e escalável para:
-- **Importação de listas de domínios** conhecidos como suspeitos ou maliciosos
+- **Importação de listas de domínios** conhecidos como suspeitos ou maliciosos (5M+ domínios)
 - **Análise contínua de logs de DNS** para detectar padrões de acesso a domínios problemáticos
 - **Sincronização em tempo real** com NextDNS para bloqueio automático
-- **Resiliência e graceful degradation** sob carga e falhas de rede
+- **Enterprise-grade Throttling** para proteção de infraestrutura, incluindo:
+  - **Hierarchical Token Buckets**: Controle fino de fluxo global e por partição.
+  - **Backpressure de Memória**: Canais *Bounded* para evitar estouro de memória sob carga.
+  - **Circuit Breaker Inteligente**: Degradação adaptativa com *Recuperação em Degraus* (Step Recovery).
+  - **Burst Dinâmico**: Ajuste automático de picos baseado na saúde da partição.
 
 ---
 

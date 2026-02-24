@@ -17,7 +17,7 @@ Navegação completa da documentação do NextDnsBetBlocker com foco em Table St
 1. Comece com: [README.md](../README.md) - Architecture overview
 2. Deep-dive: [IMPORTER_README.md](IMPORTER_README.md) - Design patterns, quota management
 3. Deep-dive: [WORKER_FUNCTION_README.md](WORKER_FUNCTION_README.md) - Analysis pipeline
-4. Technical fix: [THROTTLING_IMPROVEMENTS.md](THROTTLING_IMPROVEMENTS.md) - Burst rate fix & validation
+4. Patterns: [HIGH_THROUGHPUT_PATTERNS.md](HIGH_THROUGHPUT_PATTERNS.md) - Reusable code patterns
 5. Reference: [COST_ANALYSIS.md](COST_ANALYSIS.md) - Economics of design decisions
 
 #### 👷 **DevOps / Operations**
