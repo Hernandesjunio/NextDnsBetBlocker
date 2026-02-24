@@ -544,6 +544,7 @@ namespace NextDnsBetBlocker.Core
         {
             while (true)
             {
+                int waitTimeMs;
                 await _lock.WaitAsync();
                 try
                 {
@@ -554,10 +555,17 @@ namespace NextDnsBetBlocker.Core
                         return;
                     }
                     double missing = tokensToConsume - _availableTokens;
-                    int waitTimeMs = (int)Math.Ceiling(missing / _tokensPerMs);
-                    await Task.Delay(waitTimeMs);
+                    waitTimeMs = (int)Math.Ceiling(missing / _tokensPerMs);
                 }
-                finally { _lock.Release(); }
+                finally
+                {
+                    // Fix 3: lock liberado ANTES do await Task.Delay
+                    // Antes: lock retido durante todo o delay → os outros FlushWorkers ficavam
+                    // bloqueados em WaitAsync mesmo com tokens disponíveis para eles
+                    _lock.Release();
+                }
+
+                await Task.Delay(waitTimeMs); // espera fora do lock
             }
         }
 
