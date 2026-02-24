@@ -534,7 +534,9 @@ namespace NextDnsBetBlocker.Core
             Capacity = maxBurst ?? tokensPerSecond;
             _capacity = Capacity;
             _tokensPerMs = (double)tokensPerSecond / 1000.0;
-            _availableTokens = Capacity;
+            // Fix 4: inicia com 0 tokens — evita burst de startup que, somado ao refill do 1º segundo,
+            // poderia gerar até Rate+Capacity ops no primeiro segundo, excedendo o limite da Azure (~2000/s)
+            _availableTokens = 0;
             _lastRefillTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
 
