@@ -89,6 +89,11 @@ namespace NextDnsBetBlocker.Core
         private readonly ShardingProcessorMetrics _metrics;
         private readonly ShardingProcessorProgress? _progress;
         private readonly IProgressReporter? _progressReporter;
+        private readonly ILogger _logger;
+        private readonly int _partitionLimit;
+
+        private long _lastSecondTimestamp;
+        private int _itemsProcessedInCurrentSecond;
 
         public PartitionWorker(
             string partitionKey, 
@@ -96,6 +101,8 @@ namespace NextDnsBetBlocker.Core
             PartitionProcessingConfig processingConfig,
             BatchStorageOperation storageOperation,
             ShardingProcessorMetrics metrics,
+            ILogger logger,
+            int partitionLimit,
             ShardingProcessorProgress? progress = null,
             IProgressReporter? progressReporter = null)
         {
@@ -104,6 +111,8 @@ namespace NextDnsBetBlocker.Core
             _processingConfig = processingConfig;
             _storageOperation = storageOperation ?? throw new ArgumentNullException(nameof(storageOperation));
             _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _partitionLimit = partitionLimit;
             _progress = progress;
             _progressReporter = progressReporter;
             _itemsChannel = Channel.CreateUnbounded<Entity>();
@@ -169,6 +178,9 @@ namespace NextDnsBetBlocker.Core
                     _metrics.RecordBatchProcessed(_partitionKey, batch.Count);
                     _throttler.RecordSuccess(_partitionKey);
 
+                    // Monitorar Throughput da Partição
+                    CheckThroughput(batch.Count);
+
                     // Reportar progresso
                     _progress?.ReportProgress(batch.Count);
                     if (_progress != null && _progressReporter != null)
@@ -185,15 +197,52 @@ namespace NextDnsBetBlocker.Core
                 }
             }
         }
+
+        private void CheckThroughput(int count)
+        {
+            long currentStartOfSecond = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long lastRecordedSecond = Interlocked.Read(ref _lastSecondTimestamp);
+
+            if (currentStartOfSecond > lastRecordedSecond)
+            {
+                if (Interlocked.CompareExchange(ref _lastSecondTimestamp, currentStartOfSecond, lastRecordedSecond) == lastRecordedSecond)
+                {
+                    // Novo segundo iniciado, reseta contador
+                    Interlocked.Exchange(ref _itemsProcessedInCurrentSecond, 0);
+                }
+            }
+
+            int currentTotal = Interlocked.Add(ref _itemsProcessedInCurrentSecond, count);
+
+            // Alerta se exceder 110% do limite (considerando burst permitido de 10%)
+            // O Azure permite picos breves, mas sustentação acima do limite causa 429
+            int alertThreshold = (int)(_partitionLimit * 1.1); 
+
+            if (currentTotal > alertThreshold)
+            {
+                // Evita flood de logs - loga apenas a cada 100 itens excedentes ou algo assim?
+                // Simplificação: logar sempre que exceder incrementos significativos para não travar IO de log
+                if (currentTotal % 500 == 0 || currentTotal == alertThreshold + count) 
+                {
+                    _logger.LogWarning(
+                        "⚠️ Partition {PartitionKey} throughput warning: {CurrentRate} items/sec (Limit: {Limit})", 
+                        _partitionKey, 
+                        currentTotal, 
+                        _partitionLimit);
+                }
+            }
+        }
     }
 
     public class ShardingProcessor
     {
         private readonly ConcurrentDictionary<string, PartitionWorker> _workers = new();
         private readonly HierarchicalThrottler _throttler;
+        private readonly ThrottlingConfig _throttlingConfig; // Novo campo para guardar config
         private readonly PartitionProcessingConfig _partitionProcessingConfig;
         private readonly BatchStorageOperation _storageOperation;
         private readonly ShardingProcessorMetrics _metrics;
+        private readonly ILoggerFactory _loggerFactory; // Guardar factory para criar loggers pros workers
         private IProgressReporter _progressReporter;
         private ShardingProcessorProgress? _progress;
 
@@ -206,13 +255,15 @@ namespace NextDnsBetBlocker.Core
             AdaptiveDegradationConfig? degradationConfig = null
             )
         {
-            throttlingConfig = throttlingConfig ?? throw new ArgumentNullException(nameof(throttlingConfig));
+            _throttlingConfig = throttlingConfig ?? throw new ArgumentNullException(nameof(throttlingConfig));
             partitionProcessingConfig = partitionProcessingConfig ?? throw new ArgumentNullException(nameof(partitionProcessingConfig));
             storageOperation = storageOperation ?? throw new ArgumentNullException(nameof(storageOperation));
 
             partitionProcessingConfig.Validate();
             degradationConfig?.Validate();
 
+            // ... (resto do construtor)
+            _loggerFactory = loggerFactory;
             _metrics = new ShardingProcessorMetrics();
             _throttler = new HierarchicalThrottler(
                 throttlingConfig.GlobalLimitPerSecond, 
@@ -259,6 +310,8 @@ namespace NextDnsBetBlocker.Core
                         _partitionProcessingConfig,
                         _storageOperation,
                         _metrics,
+                        _loggerFactory.CreateLogger<PartitionWorker>(), // Injeta logger
+                        _throttlingConfig.PartitionLimitPerSecond,      // Injeta limite
                         _progress,
                         _progressReporter);
 
