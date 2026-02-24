@@ -340,7 +340,8 @@ namespace NextDnsBetBlocker.Core
             {
                 if (state.ShouldAttemptCircuitBreakerReset(_degradationConfig.CircuitBreakerResetIntervalSeconds))
                 {
-                    state.ResetCircuitBreaker();
+                    // Fix 2 (call-site): passa os parâmetros para inicializar no mínimo correto, não em 0
+                    state.ResetCircuitBreaker(_originalPartitionLimit, _degradationConfig.MinimumDegradationPercentage);
                     _logger.LogInformation(
                         "Circuit breaker reset for partition {PartitionKey}. Attempting recovery",
                         partitionKey);
@@ -406,7 +407,8 @@ namespace NextDnsBetBlocker.Core
             if (!_degradationConfig.Enabled || !_degradationStates.TryGetValue(partitionKey, out var state))
                 return _originalPartitionLimit;
 
-            return state.CurrentDegradedLimit;
+            // Guard: defesa em profundidade — evita TokenBucket com rate=0 em qualquer janela concorrente
+            return Math.Max(1, state.CurrentDegradedLimit);
         }
 
         /// <summary>
@@ -468,9 +470,13 @@ namespace NextDnsBetBlocker.Core
             if (CircuitBreakerState == CircuitBreakerState.Open)
                 return;
 
+            // Fix 1: Inicializa na primeira chamada — evita salto incorreto de 0 → minLimit no primeiro erro
+            if (CurrentDegradedLimit == 0)
+                CurrentDegradedLimit = originalLimit;
+
             int degradationReduction = originalLimit * config.DegradationPercentagePerError / 100;
             int minLimit = originalLimit * config.MinimumDegradationPercentage / 100;
-            
+
             int newLimit = CurrentDegradedLimit - degradationReduction;
             CurrentDegradedLimit = Math.Max(minLimit, newLimit);
         }
@@ -502,10 +508,12 @@ namespace NextDnsBetBlocker.Core
                    (DateTime.UtcNow - _circuitBreakerOpenedTime).TotalSeconds >= resetIntervalSeconds;
         }
 
-        public void ResetCircuitBreaker()
+        // Fix 2: Aceita os parâmetros necessários para calcular o limite mínimo correto
+        // Antes: CurrentDegradedLimit = 0 → TokenBucket(rate=0) → _tokensPerMs=0 → Task.Delay(Infinity) → crash
+        public void ResetCircuitBreaker(int originalLimit, int minimumDegradationPercentage)
         {
             CircuitBreakerState = CircuitBreakerState.Degraded;
-            CurrentDegradedLimit = 0;
+            CurrentDegradedLimit = Math.Max(1, originalLimit * minimumDegradationPercentage / 100);
         }
     }
 
