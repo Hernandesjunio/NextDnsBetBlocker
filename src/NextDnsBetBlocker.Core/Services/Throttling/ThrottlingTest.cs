@@ -480,11 +480,13 @@ namespace NextDnsBetBlocker.Core
                 if (state.CurrentDegradedLimit < _originalPartitionLimit && 
                     state.ShouldAttemptRecovery(_degradationConfig.RecoveryIntervalSeconds))
                 {
-                    state.RecoverGradually(_originalPartitionLimit);
-                    _logger.LogInformation(
-                        "Partition {PartitionKey} recovering. Limit restored to {CurrentLimit} ops/sec",
-                        partitionKey,
-                        state.CurrentDegradedLimit);
+                    if (state.RecoverGradually(_originalPartitionLimit))
+                    {
+                        _logger.LogInformation(
+                            "Partition {PartitionKey} recovering. Limit restored to {CurrentLimit} ops/sec",
+                            partitionKey,
+                            state.CurrentDegradedLimit);
+                    }
                 }
             }
         }
@@ -548,11 +550,16 @@ namespace NextDnsBetBlocker.Core
         
         private DateTime _lastErrorTime;
         private DateTime _lastSuccessTime;
+        private DateTime _lastRecoveryTime; // Novo campo para controlar frequência de recuperação
         private DateTime _circuitBreakerOpenedTime;
 
         public void RecordError(int originalLimit, AdaptiveDegradationConfig config)
         {
             _lastErrorTime = DateTime.UtcNow;
+
+            // Se erro ocorreu, forçar delay antes de próxima tentativa de recovery
+            // Isso evita que um erro pare o recovery e logo em seguida ele tente subir de novo muito rápido
+            _lastRecoveryTime = DateTime.UtcNow; 
 
             if (CircuitBreakerState == CircuitBreakerState.Open)
                 return;
@@ -568,14 +575,43 @@ namespace NextDnsBetBlocker.Core
             CurrentDegradedLimit = Math.Max(minLimit, newLimit);
         }
 
-        public void RecoverGradually(int originalLimit)
+        public bool RecoverGradually(int originalLimit)
         {
             _lastSuccessTime = DateTime.UtcNow;
-            
+
+            // Só recupera se passou tempo suficiente desde a última recuperação (ex: 5 segundos)
+            // Isso cria uma escada suave: sobe um degrau, estabiliza, sobe outro
+            if ((DateTime.UtcNow - _lastRecoveryTime).TotalSeconds < 5)
+                return false;
+
             if (CurrentDegradedLimit < originalLimit)
             {
-                CurrentDegradedLimit = originalLimit;
+                // Recupera 10% do limite original por degrau
+                int step = Math.Max(1, (int)(originalLimit * 0.1));
+                int newLimit = CurrentDegradedLimit + step;
+
+                // Evita ultrapassar o original
+                int previousLimit = CurrentDegradedLimit;
+                CurrentDegradedLimit = Math.Min(originalLimit, newLimit);
+
+                if (CurrentDegradedLimit != previousLimit)
+                {
+                    _lastRecoveryTime = DateTime.UtcNow;
+
+                    // Se recuperou totalmente, fecha o circuit breaker (estado normal)
+                    if (CurrentDegradedLimit >= originalLimit)
+                    {
+                        CircuitBreakerState = CircuitBreakerState.Closed;
+                    }
+                    else
+                    {
+                        // Se ainda não está 100%, mantém como Degraded
+                        CircuitBreakerState = CircuitBreakerState.Degraded;
+                    }
+                    return true;
+                }
             }
+            return false;
         }
 
         public bool ShouldAttemptRecovery(int recoveryIntervalSeconds)
