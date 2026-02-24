@@ -489,7 +489,7 @@ namespace NextDnsBetBlocker.Core
                 if (state.CurrentDegradedLimit < _originalPartitionLimit && 
                     state.ShouldAttemptRecovery(_degradationConfig.RecoveryIntervalSeconds))
                 {
-                    if (state.RecoverGradually(_originalPartitionLimit))
+                    if (state.RecoverGradually(_originalPartitionLimit, _degradationConfig.RecoveryIntervalSeconds))
                     {
                         _logger.LogInformation(
                             "Partition {PartitionKey} recovering. Limit restored to {CurrentLimit} ops/sec",
@@ -584,13 +584,13 @@ namespace NextDnsBetBlocker.Core
             CurrentDegradedLimit = Math.Max(minLimit, newLimit);
         }
 
-        public bool RecoverGradually(int originalLimit)
+        public bool RecoverGradually(int originalLimit, int intervalSeconds)
         {
             _lastSuccessTime = DateTime.UtcNow;
 
             // Só recupera se passou tempo suficiente desde a última recuperação (ex: 5 segundos)
             // Isso cria uma escada suave: sobe um degrau, estabiliza, sobe outro
-            if ((DateTime.UtcNow - _lastRecoveryTime).TotalSeconds < 5)
+            if ((DateTime.UtcNow - _lastRecoveryTime).TotalSeconds < intervalSeconds)
                 return false;
 
             if (CurrentDegradedLimit < originalLimit)

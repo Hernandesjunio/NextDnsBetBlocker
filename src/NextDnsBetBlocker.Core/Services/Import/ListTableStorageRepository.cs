@@ -22,10 +22,14 @@ public class ListTableStorageRepository : IListTableStorageRepository
 
     public ListTableStorageRepository(
         IOptions<ListImportConfig> options,
+        IOptions<WorkerSettings> optionsWorker,
         ILogger<ListTableStorageRepository> logger)
     {
         _logger = logger;
-        _tableServiceClient = new TableServiceClient(options.Value.AzureStorageConnectionString);
+        var connectionString = string.IsNullOrWhiteSpace(options.Value.AzureStorageConnectionString)
+            ? optionsWorker.Value.AzureStorageConnectionString : options.Value.AzureStorageConnectionString;
+
+        _tableServiceClient = new TableServiceClient(connectionString);
         _tableClientCache = new ConcurrentDictionary<string, TableClient>(StringComparer.OrdinalIgnoreCase);
     }
 
